@@ -207,6 +207,13 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	local stretchTall = random:NextNumber(1.2, 1.4)
 	local landingSquish = random:NextNumber(0.7, 0.8)
 
+	-- Random rotation offset that persists after this hit (X axis only)
+	local rotX = math.rad(random:NextNumber(-15, 15))
+	local restPivot = orig.pivot * CFrame.Angles(rotX, 0, 0)
+
+	-- Update stored originals so next hit builds on this rotation
+	orig.pivot = restPivot
+
 	-- Phase 1: Squish down (impact compression) + nudge away
 	spr.target(block, 1, 25, {
 		Scale = orig.scale * squishFlat,
@@ -222,8 +229,18 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 		})
 	end)
 
-	-- Phase 3: Compress again (secondary bounce)
-	task.delay(0.2, function()
+	-- Phase 3: Subtle float upward (very slight lift)
+	local floatHeight = random:NextNumber(0.3, 0.5)
+	task.delay(0.18, function()
+		if self._animVersion[block] ~= version then return end
+		spr.target(block, 1, 14, {
+			Scale = orig.scale,
+			Pivot = restPivot + Vector3.new(0, floatHeight, 0),
+		})
+	end)
+
+	-- Phase 4: Compress again (secondary bounce, back on ground)
+	task.delay(0.3, function()
 		if self._animVersion[block] ~= version then return end
 		spr.target(block, 1, 20, {
 			Scale = orig.scale * landingSquish,
@@ -231,12 +248,12 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 		})
 	end)
 
-	-- Phase 4: Bouncy settle to original size (underdamped = wobbly)
-	task.delay(0.3, function()
+	-- Phase 5: Bouncy settle to new resting rotation (underdamped = wobbly)
+	task.delay(0.4, function()
 		if self._animVersion[block] ~= version then return end
 		spr.target(block, 0.3, 5, {
 			Scale = orig.scale,
-			Pivot = orig.pivot,
+			Pivot = restPivot,
 		})
 	end)
 end
