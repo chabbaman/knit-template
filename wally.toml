@@ -6,6 +6,7 @@ realm = "shared"
 
 [dependencies]
 Knit = "sleitnick/knit@1.7.0"
+Vide = "centau/vide@0.4.0"
 
 [server-dependencies]
 ProfileStore = "lm-loleris/profilestore@1.0.3"

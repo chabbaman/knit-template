@@ -7,7 +7,14 @@ local Packages = ReplicatedStorage.Packages
 local Shared = ReplicatedStorage.Shared
 local Knit = require(Packages.Knit)
 local spr = require(Shared.Spr)
+local vide = require(Packages.Vide)
+local create = vide.create
+local source = vide.source
+local spring = vide.spring
+local root = vide.root
 
+local BILLBOARD_RANGE_SQ = 30 * 30
+local BILLBOARD_SIZE = UDim2.fromScale(10.125, 6.75)
 local DETECTION_RANGE_SQ = 8 * 8
 local DEBRIS_MIN = 1
 local DEBRIS_MAX = 3
@@ -16,11 +23,273 @@ local DEBRIS_LAUNCH_TIME = 0.15
 local DEBRIS_PULL_ACCEL = 250
 local DEBRIS_COLLECT_DIST_SQ = 3 * 3
 
+
 local random = Random.new()
 
 local LuckyBlockController = Knit.CreateController({
 	Name = "LuckyBlockController",
 })
+
+function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
+	local _, size = block:GetBoundingBox()
+	local blockPos = block:GetPivot().Position
+	local attachmentPos = blockPos + Vector3.new(0, size.Y / 2, 0)
+
+	local attachment = Instance.new("Attachment")
+	attachment.CFrame = CFrame.new(attachmentPos)
+	attachment.Parent = workspace.Terrain
+
+	local scaleTarget = source(0)
+	self._scaleTargets[block] = scaleTarget
+
+	local destroy = root(function()
+		local animatedScale = spring(scaleTarget, 0.3, 0.6)
+
+		create "BillboardGui" {
+			Name = "BillboardGui",
+			Active = true,
+			Brightness = 1.5,
+			MaxDistance = 100,
+			ResetOnSpawn = false,
+			Size = function()
+				local s = animatedScale()
+				return UDim2.fromScale(BILLBOARD_SIZE.X.Scale * s, BILLBOARD_SIZE.Y.Scale * s)
+			end,
+			StudsOffsetWorldSpace = Vector3.new(0, 6, 0),
+			ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+			Parent = attachment,
+
+			create "Frame" {
+				Name = "Inner",
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(1, 1),
+
+				create "UIListLayout" {
+					Name = "UIListLayout",
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					VerticalAlignment = Enum.VerticalAlignment.Center,
+				},
+
+				create "TextLabel" {
+					Name = "Mutation",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -4,
+					Size = UDim2.fromScale(1, 0.2),
+					Text = "Gold",
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+
+					create "UIGradient" {
+						Name = "UIGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 94, 0)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 217, 0)),
+						}),
+						Rotation = -90,
+					},
+
+					create "UIStroke" {
+						Name = "UIStroke",
+						LineJoinMode = Enum.LineJoinMode.Miter,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					},
+				},
+
+				create "TextLabel" {
+					Name = "Name",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -3,
+					Size = UDim2.fromScale(1, 0.2),
+					Text = "OdinDinDinDun",
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+					ZIndex = 2,
+
+					create "UIGradient" {
+						Name = "UIGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(165, 196, 199)),
+							ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
+						}),
+						Rotation = -90,
+					},
+
+					create "UIStroke" {
+						Name = "UIStroke",
+						LineJoinMode = Enum.LineJoinMode.Miter,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					},
+				},
+
+				create "TextLabel" {
+					Name = "Rarity",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -2,
+					Size = UDim2.fromScale(1, 0.2),
+					Text = "Celestial",
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+
+					create "UIStroke" {
+						Name = "UIStroke",
+						Color = Color3.new(1, 1, 1),
+						LineJoinMode = Enum.LineJoinMode.Miter,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					},
+				},
+
+				create "TextLabel" {
+					Name = "Earnings",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -1,
+					Size = UDim2.fromScale(1, 0.2),
+					Text = "$30/s",
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+
+					create "UIGradient" {
+						Name = "UIGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(55, 255, 0)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(132, 255, 0)),
+						}),
+						Rotation = -90,
+					},
+
+					create "UIStroke" {
+						Name = "UIStroke",
+						LineJoinMode = Enum.LineJoinMode.Miter,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					},
+				},
+
+				create "Frame" {
+					Name = "TimeLeft",
+					BackgroundTransparency = 1,
+					LayoutOrder = -5,
+					Size = UDim2.fromScale(0.5, 0.2),
+
+					create "ImageLabel" {
+						Name = "ImageLabel",
+						AnchorPoint = Vector2.new(0, 0.5),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://89665851185071",
+						LayoutOrder = -1,
+						Position = UDim2.fromScale(0, 0.5),
+						ScaleType = Enum.ScaleType.Fit,
+						Size = UDim2.fromScale(0.3, 1),
+					},
+
+					create "TextLabel" {
+						Name = "TimeLeft",
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						FontFace = Font.new(
+							"rbxasset://fonts/families/GothamSSm.json",
+							Enum.FontWeight.Heavy,
+							Enum.FontStyle.Normal
+						),
+						LayoutOrder = 2,
+						Size = UDim2.fromScale(0.5, 1),
+						Text = "60s",
+						TextColor3 = Color3.new(1, 1, 1),
+						TextScaled = true,
+						TextXAlignment = Enum.TextXAlignment.Left,
+
+						create "UIGradient" {
+							Name = "UIGradient",
+							Color = ColorSequence.new({
+								ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 170, 255)),
+								ColorSequenceKeypoint.new(1, Color3.fromRGB(85, 85, 255)),
+							}),
+							Rotation = -90,
+						},
+
+						create "UIStroke" {
+							Name = "UIStroke",
+							LineJoinMode = Enum.LineJoinMode.Miter,
+							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+							Thickness = 0.05,
+						},
+					},
+
+					create "UIListLayout" {
+						Name = "UIListLayout",
+						FillDirection = Enum.FillDirection.Horizontal,
+						HorizontalAlignment = Enum.HorizontalAlignment.Center,
+						Padding = UDim.new(0.05, 0),
+						SortOrder = Enum.SortOrder.LayoutOrder,
+					},
+				},
+			},
+		}
+	end)
+
+	self._uiRoots[block] = { destroy = destroy, attachment = attachment }
+end
+
+function LuckyBlockController:_setupBlock(block: Model)
+	local adornee = block.PrimaryPart or block:FindFirstChildWhichIsA("BasePart", true)
+	if adornee then
+		self:_createBillboard(block, adornee)
+	else
+		-- Parts haven't loaded yet; wait for the first BasePart to appear
+		local conn
+		conn = block.DescendantAdded:Connect(function(descendant)
+			if descendant:IsA("BasePart") then
+				conn:Disconnect()
+				self:_createBillboard(block, descendant)
+			end
+		end)
+		self._pendingConn = self._pendingConn or {}
+		self._pendingConn[block] = conn
+	end
+end
+
+function LuckyBlockController:_cleanupBlock(block: Model)
+	local entry = self._uiRoots[block]
+	if entry then
+		entry.destroy()
+		entry.attachment:Destroy()
+		self._uiRoots[block] = nil
+	end
+	self._scaleTargets[block] = nil
+	if self._pendingConn and self._pendingConn[block] then
+		self._pendingConn[block]:Disconnect()
+		self._pendingConn[block] = nil
+	end
+end
 
 function LuckyBlockController:_getClosestBlock(characterPosition: Vector3): (Model?, number)
 	local blocks = self._blocks
@@ -44,6 +313,10 @@ end
 function LuckyBlockController:_cacheBlocks()
 	local container = workspace:FindFirstChild("Lucky Blocks")
 	if not container then
+		-- Clean up any existing UIs
+		for _, block in self._blocks do
+			self:_cleanupBlock(block)
+		end
 		self._blocks = {}
 		return
 	end
@@ -51,9 +324,25 @@ function LuckyBlockController:_cacheBlocks()
 	local blocks = {}
 	local children = container:GetChildren()
 
+	-- Track which blocks are still present
+	local current = {}
 	for i = 1, #children do
-		if children[i]:IsA("Model") then
-			blocks[#blocks + 1] = children[i]
+		local child = children[i]
+		if child:IsA("Model") then
+			blocks[#blocks + 1] = child
+			current[child] = true
+
+			-- Set up UI for new blocks
+			if not self._uiRoots[child] and not (self._pendingConn and self._pendingConn[child]) then
+				self:_setupBlock(child)
+			end
+		end
+	end
+
+	-- Clean up removed blocks
+	for _, block in self._blocks do
+		if not current[block] then
+			self:_cleanupBlock(block)
 		end
 	end
 
@@ -189,6 +478,9 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	-- Spawn debris from the block's position
 	self:_spawnDebris(block, orig.pivot.Position)
 
+	-- Camera shake on hit
+	self._cameraShake:Shake(0.3, 0.15, 25)
+
 	-- Subtle nudge away from player
 	local awayDir = (orig.pivot.Position - playerPosition) * Vector3.new(1, 0, 1)
 	if awayDir.Magnitude < 0.01 then
@@ -282,10 +574,14 @@ function LuckyBlockController:KnitInit()
 	self._hrp = nil
 	self._originals = {}
 	self._animVersion = {}
-
+	self._uiRoots = {}
+	self._scaleTargets = {}
+	self._cameraShake = nil
 end
 
 function LuckyBlockController:KnitStart()
+	self._cameraShake = Knit.GetController("CameraShakeController")
+
 	local player = Players.LocalPlayer
 
 	-- Cache HumanoidRootPart reference on character spawn
@@ -315,6 +611,35 @@ function LuckyBlockController:KnitStart()
 			self:_cacheBlocks()
 		end)
 	end
+
+	-- Update billboard visibility based on proximity + face nearest block when in range
+	RunService.Heartbeat:Connect(function()
+		local hrp = self._hrp
+		if not hrp then
+			return
+		end
+
+		local playerPos = hrp.Position
+		for _, block in self._blocks do
+			local scaleTarget = self._scaleTargets[block]
+			if scaleTarget then
+				local delta = block:GetPivot().Position - playerPos
+				local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
+				scaleTarget(if distSq <= BILLBOARD_RANGE_SQ then 1 else 0)
+			end
+		end
+
+		-- Face the closest block when within break range
+		local closestBlock, closestSq = self:_getClosestBlock(playerPos)
+		if closestBlock and closestSq <= DETECTION_RANGE_SQ then
+			local blockPos = closestBlock:GetPivot().Position
+			local lookAt = Vector3.new(blockPos.X, playerPos.Y, blockPos.Z)
+			local humanoid = hrp.Parent and hrp.Parent:FindFirstChildWhichIsA("Humanoid")
+			if humanoid and (lookAt - playerPos).Magnitude > 0.01 then
+				hrp.CFrame = CFrame.lookAt(playerPos, lookAt)
+			end
+		end
+	end)
 
 	-- Click (MouseButton1) or tap (Touch)
 	UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
