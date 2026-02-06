@@ -22,6 +22,8 @@ local DEBRIS_TEMPLATE = ReplicatedStorage.Assets.LuckyBlockDebris
 local DEBRIS_LAUNCH_TIME = 0.15
 local DEBRIS_PULL_ACCEL = 250
 local DEBRIS_COLLECT_DIST_SQ = 3 * 3
+local FOV_IMPULSE_AMOUNT = 2
+local FOV_IMPULSE_HOLD = 0.05
 
 
 local random = Random.new()
@@ -252,6 +254,81 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						SortOrder = Enum.SortOrder.LayoutOrder,
 					},
 				},
+
+				create "Frame" {
+					Name = "ProgressBar",
+					BackgroundColor3 = Color3.fromRGB(23, 29, 38),
+					BackgroundTransparency = 0.15,
+					LayoutOrder = 1,
+					Size = UDim2.fromScale(0.85, 0.13),
+
+					create "UICorner" {
+						Name = "UICorner",
+						CornerRadius = UDim.new(0.5, 0),
+					},
+
+					create "UIStroke" {
+						Name = "UIStroke",
+						Color = Color3.fromRGB(255, 255, 255),
+						LineJoinMode = Enum.LineJoinMode.Round,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.03,
+						Transparency = 0.2,
+					},
+
+					create "ImageLabel" {
+						Name = "Fill",
+						BackgroundTransparency = 0,
+						ClipsDescendants = true,
+						Image = "rbxassetid://6927295847",
+						ImageColor3 = Color3.fromRGB(255, 255, 255),
+						ImageTransparency = 0.66,
+						ResampleMode = Enum.ResamplerMode.Pixelated,
+						ScaleType = Enum.ScaleType.Tile,
+						Size = UDim2.fromScale(0.35, 1),
+						TileSize = UDim2.new(0.3, 0, 0.8, 0),
+
+						create "UICorner" {
+							Name = "UICorner",
+							CornerRadius = UDim.new(0.5, 0),
+						},
+
+						create "UIGradient" {
+							Name = "UIGradient",
+							Color = ColorSequence.new({
+								ColorSequenceKeypoint.new(0, Color3.fromRGB(57, 150, 78)),
+								ColorSequenceKeypoint.new(1, Color3.fromRGB(33, 104, 51)),
+							}),
+							Rotation = -90,
+						},
+					},
+
+					create "TextLabel" {
+						Name = "ProgressText",
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						FontFace = Font.new(
+							"rbxasset://fonts/families/FredokaOne.json",
+							Enum.FontWeight.Heavy,
+							Enum.FontStyle.Normal
+						),
+						Position = UDim2.fromScale(0.5, 0.5),
+						Size = UDim2.fromScale(0.95, 0.85),
+						Text = "35%",
+						TextColor3 = Color3.new(1, 1, 1),
+						TextScaled = true,
+						ZIndex = 2,
+
+						create "UIStroke" {
+							Name = "UIStroke",
+							Color = Color3.fromRGB(0, 0, 0),
+							LineJoinMode = Enum.LineJoinMode.Round,
+							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+							Thickness = 0.05,
+							Transparency = 0.15,
+						},
+					},
+				},
 			},
 		}
 	end)
@@ -458,6 +535,7 @@ function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3)
 					debris.Size = originalSize * alpha
 
 					if distSq < 0.25 then
+						self:_impulseFov()
 						debris:Destroy()
 						connection:Disconnect()
 					end
@@ -465,6 +543,34 @@ function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3)
 			end
 		end)
 	end
+end
+
+function LuckyBlockController:_impulseFov()
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
+	if self._baseFov == nil then
+		self._baseFov = camera.FieldOfView
+	end
+
+	local version = (self._fovImpulseVersion or 0) + 1
+	self._fovImpulseVersion = version
+
+	spr.target(camera, 0.5, 9, {
+		FieldOfView = self._baseFov + FOV_IMPULSE_AMOUNT,
+	})
+
+	task.delay(FOV_IMPULSE_HOLD, function()
+		if self._fovImpulseVersion ~= version then
+			return
+		end
+
+		spr.target(camera, 0.75, 5, {
+			FieldOfView = self._baseFov,
+		})
+	end)
 end
 
 function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector3)
@@ -577,10 +683,16 @@ function LuckyBlockController:KnitInit()
 	self._uiRoots = {}
 	self._scaleTargets = {}
 	self._cameraShake = nil
+	self._baseFov = nil
+	self._fovImpulseVersion = 0
 end
 
 function LuckyBlockController:KnitStart()
 	self._cameraShake = Knit.GetController("CameraShakeController")
+	local camera = workspace.CurrentCamera
+	if camera then
+		self._baseFov = camera.FieldOfView
+	end
 
 	local player = Players.LocalPlayer
 
