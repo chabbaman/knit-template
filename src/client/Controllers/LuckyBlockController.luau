@@ -16,6 +16,7 @@ local root = vide.root
 local BILLBOARD_RANGE_SQ = 30 * 30
 local BILLBOARD_SIZE = UDim2.fromScale(10.125, 6.75)
 local DETECTION_RANGE_SQ = 8 * 8
+local MAX_HEALTH_FALLBACK = 100
 local DEBRIS_MIN = 1
 local DEBRIS_MAX = 3
 local DEBRIS_TEMPLATE = ReplicatedStorage.Assets.LuckyBlockDebris
@@ -43,9 +44,17 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 
 	local scaleTarget = source(0)
 	self._scaleTargets[block] = scaleTarget
+	local healthFractionTarget = source(1)
+	self._healthFractionTargets[block] = healthFractionTarget
+	local progressPulseTarget = source(1)
+	self._progressPulseTargets[block] = progressPulseTarget
+	local timeLeftTarget = source(0)
+	self._timeLeftTargets[block] = timeLeftTarget
 
 	local destroy = root(function()
 		local animatedScale = spring(scaleTarget, 0.3, 0.6)
+		local animatedHealthFraction = spring(healthFractionTarget, 0.14, 1.05)
+		local animatedProgressPulse = spring(progressPulseTarget, 0.12, 1)
 
 		create "BillboardGui" {
 			Name = "BillboardGui",
@@ -224,7 +233,9 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						),
 						LayoutOrder = 2,
 						Size = UDim2.fromScale(0.5, 1),
-						Text = "60s",
+						Text = function()
+							return `{math.ceil(math.max(0, timeLeftTarget()))}s`
+						end,
 						TextColor3 = Color3.new(1, 1, 1),
 						TextScaled = true,
 						TextXAlignment = Enum.TextXAlignment.Left,
@@ -260,7 +271,10 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 					BackgroundColor3 = Color3.fromRGB(23, 29, 38),
 					BackgroundTransparency = 0.15,
 					LayoutOrder = 1,
-					Size = UDim2.fromScale(0.85, 0.13),
+					Size = function()
+						local scale = animatedProgressPulse()
+						return UDim2.fromScale(0.85 * scale, 0.13 * scale)
+					end,
 
 					create "UICorner" {
 						Name = "UICorner",
@@ -276,30 +290,47 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						Transparency = 0.2,
 					},
 
-					create "ImageLabel" {
-						Name = "Fill",
-						BackgroundTransparency = 0,
+					create "Frame" {
+						Name = "FillMask",
+						BackgroundTransparency = 1,
 						ClipsDescendants = true,
-						Image = "rbxassetid://6927295847",
-						ImageColor3 = Color3.fromRGB(255, 255, 255),
-						ImageTransparency = 0.66,
-						ResampleMode = Enum.ResamplerMode.Pixelated,
-						ScaleType = Enum.ScaleType.Tile,
-						Size = UDim2.fromScale(0.35, 1),
-						TileSize = UDim2.new(0.3, 0, 0.8, 0),
+						Position = UDim2.fromScale(0.01, 0.08),
+						Size = function()
+							return UDim2.fromScale(math.clamp(animatedHealthFraction(), 0, 1) * 0.98, 0.84)
+						end,
 
 						create "UICorner" {
 							Name = "UICorner",
 							CornerRadius = UDim.new(0.5, 0),
 						},
 
-						create "UIGradient" {
-							Name = "UIGradient",
-							Color = ColorSequence.new({
-								ColorSequenceKeypoint.new(0, Color3.fromRGB(57, 150, 78)),
-								ColorSequenceKeypoint.new(1, Color3.fromRGB(33, 104, 51)),
-							}),
-							Rotation = -90,
+						create "ImageLabel" {
+							Name = "Fill",
+							BackgroundTransparency = 0,
+							Image = "rbxassetid://6927295847",
+							ImageColor3 = Color3.fromRGB(255, 255, 255),
+							ImageTransparency = 0.66,
+							ResampleMode = Enum.ResamplerMode.Pixelated,
+							ScaleType = Enum.ScaleType.Tile,
+							Size = function()
+								local fraction = math.clamp(animatedHealthFraction(), 0.001, 1)
+								return UDim2.fromScale(1 / fraction, 1)
+							end,
+							TileSize = UDim2.fromScale(0.08, 0.8),
+
+							create "UICorner" {
+								Name = "UICorner",
+								CornerRadius = UDim.new(0.5, 0),
+							},
+
+							create "UIGradient" {
+								Name = "UIGradient",
+								Color = ColorSequence.new({
+									ColorSequenceKeypoint.new(0, Color3.fromRGB(57, 150, 78)),
+									ColorSequenceKeypoint.new(1, Color3.fromRGB(33, 104, 51)),
+								}),
+								Rotation = -90,
+							},
 						},
 					},
 
@@ -314,7 +345,9 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						),
 						Position = UDim2.fromScale(0.5, 0.5),
 						Size = UDim2.fromScale(0.95, 0.85),
-						Text = "35%",
+						Text = function()
+							return `{math.floor(math.clamp(animatedHealthFraction(), 0, 1) * 100 + 0.5)}%`
+						end,
 						TextColor3 = Color3.new(1, 1, 1),
 						TextScaled = true,
 						ZIndex = 2,
@@ -334,6 +367,57 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	end)
 
 	self._uiRoots[block] = { destroy = destroy, attachment = attachment }
+	self:_updateHealthForBlock(block)
+	self:_updateTimeLeftForBlock(block)
+	self:_pulseProgressBar(block)
+end
+
+function LuckyBlockController:_pulseProgressBar(block: Model)
+	local pulseTarget = self._progressPulseTargets[block]
+	if not pulseTarget then
+		return
+	end
+
+	pulseTarget(1.04)
+	task.delay(0.03, function()
+		if self._progressPulseTargets[block] ~= pulseTarget then
+			return
+		end
+		pulseTarget(1)
+	end)
+end
+
+function LuckyBlockController:_updateHealthForBlock(block: Model)
+	local target = self._healthFractionTargets[block]
+	if not target then
+		return
+	end
+
+	local maxHealth = block:GetAttribute("MaxHealth")
+	local health = block:GetAttribute("Health")
+	if typeof(maxHealth) ~= "number" or maxHealth <= 0 then
+		maxHealth = MAX_HEALTH_FALLBACK
+	end
+	if typeof(health) ~= "number" then
+		health = maxHealth
+	end
+
+	target(math.clamp(health / maxHealth, 0, 1))
+end
+
+function LuckyBlockController:_updateTimeLeftForBlock(block: Model)
+	local target = self._timeLeftTargets[block]
+	if not target then
+		return
+	end
+
+	local despawnAt = block:GetAttribute("DespawnAt")
+	if typeof(despawnAt) ~= "number" then
+		target(0)
+		return
+	end
+
+	target(math.max(0, despawnAt - workspace:GetServerTimeNow()))
 end
 
 function LuckyBlockController:_setupBlock(block: Model)
@@ -352,6 +436,19 @@ function LuckyBlockController:_setupBlock(block: Model)
 		self._pendingConn = self._pendingConn or {}
 		self._pendingConn[block] = conn
 	end
+
+	self._healthConns[block] = {
+		block:GetAttributeChangedSignal("Health"):Connect(function()
+			self:_updateHealthForBlock(block)
+			self:_pulseProgressBar(block)
+		end),
+		block:GetAttributeChangedSignal("MaxHealth"):Connect(function()
+			self:_updateHealthForBlock(block)
+		end),
+		block:GetAttributeChangedSignal("DespawnAt"):Connect(function()
+			self:_updateTimeLeftForBlock(block)
+		end),
+	}
 end
 
 function LuckyBlockController:_cleanupBlock(block: Model)
@@ -362,9 +459,18 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 		self._uiRoots[block] = nil
 	end
 	self._scaleTargets[block] = nil
+	self._healthFractionTargets[block] = nil
+	self._progressPulseTargets[block] = nil
+	self._timeLeftTargets[block] = nil
 	if self._pendingConn and self._pendingConn[block] then
 		self._pendingConn[block]:Disconnect()
 		self._pendingConn[block] = nil
+	end
+	if self._healthConns[block] then
+		for _, conn in self._healthConns[block] do
+			conn:Disconnect()
+		end
+		self._healthConns[block] = nil
 	end
 end
 
@@ -670,8 +776,12 @@ function LuckyBlockController:_onInput()
 	local closestBlock, closestSq = self:_getClosestBlock(hrp.Position)
 
 	if closestBlock and closestSq <= DETECTION_RANGE_SQ then
-		print("You are near a Lucky Block!")
-		self:_animateBlock(closestBlock, hrp.Position)
+		if self._luckyBlockService then
+			local ok = self._luckyBlockService:TryHitBlock(closestBlock)
+			if ok then
+				self:_animateBlock(closestBlock, hrp.Position)
+			end
+		end
 	end
 end
 
@@ -682,13 +792,19 @@ function LuckyBlockController:KnitInit()
 	self._animVersion = {}
 	self._uiRoots = {}
 	self._scaleTargets = {}
+	self._healthFractionTargets = {}
+	self._progressPulseTargets = {}
+	self._timeLeftTargets = {}
+	self._healthConns = {}
 	self._cameraShake = nil
 	self._baseFov = nil
 	self._fovImpulseVersion = 0
+	self._luckyBlockService = nil
 end
 
 function LuckyBlockController:KnitStart()
 	self._cameraShake = Knit.GetController("CameraShakeController")
+	self._luckyBlockService = Knit.GetService("LuckyBlockService")
 	local camera = workspace.CurrentCamera
 	if camera then
 		self._baseFov = camera.FieldOfView
@@ -726,6 +842,10 @@ function LuckyBlockController:KnitStart()
 
 	-- Update billboard visibility based on proximity + face nearest block when in range
 	RunService.Heartbeat:Connect(function()
+		for _, block in self._blocks do
+			self:_updateTimeLeftForBlock(block)
+		end
+
 		local hrp = self._hrp
 		if not hrp then
 			return
