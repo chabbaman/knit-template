@@ -1,10 +1,12 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Packages = ReplicatedStorage.Packages
 local Shared = ReplicatedStorage.Shared
 local Knit = require(Packages.Knit)
 local spr = require(Shared.Spr)
+local LuckyBlockRarityConstants = require(Shared.LuckyBlockRarityConstants)
 
 local BREAK_RANGE_SQ = 8 * 8
 local HIT_COOLDOWN = 0.12
@@ -23,6 +25,10 @@ local DEFAULT_DESPAWN_JITTER = 12
 local SPAWN_START_SCALE = 0.65
 local SPAWN_OVERSHOOT_SCALE = 1.08
 local SPAWN_OVERSHOOT_DELAY = 0.08
+local BREAK_ANIMATION_DURATION = 0.6
+local BREAK_ANIMATION_SCALE_MULTIPLIER = 1.75
+local DEFAULT_HIT_PARTICLE_EMIT_COUNT = 16
+local DETACHED_PARTICLE_CLEANUP_PADDING = 0.4
 
 local random = Random.new()
 
@@ -218,7 +224,9 @@ function LuckyBlockService:_spawnOne()
 	block:SetAttribute("SpawnedAt", now)
 	block:SetAttribute("DespawnAfter", despawnAfter)
 	block:SetAttribute("DespawnAt", now + despawnAfter)
-	self:_initializeBlock(block)
+	block:SetAttribute("SpawnType", spawnType)
+	block:SetAttribute("Rarity", LuckyBlockRarityConstants.getRarityFromSpawnType(spawnType))
+	self:_initializeBlock(block, spawnType)
 	self:_playSpawnAnimation(block, spawnCFrame, size.Y * 0.5)
 
 	task.delay(despawnAfter, function()
@@ -232,6 +240,12 @@ function LuckyBlockService:_pivotForScale(basePivot: CFrame, halfHeight: number,
 	local scaleFactor = targetScale / math.max(baseScale, 0.001)
 	local liftCompensation = halfHeight * (scaleFactor - 1)
 	return basePivot + basePivot.UpVector * liftCompensation
+end
+
+function LuckyBlockService:_pivotForScaleGrounded(basePivot: CFrame, halfHeight: number, targetScale: number, baseScale: number): CFrame
+	local scaleFactor = targetScale / math.max(baseScale, 0.001)
+	local liftCompensation = halfHeight * (scaleFactor - 1)
+	return basePivot + Vector3.new(0, liftCompensation, 0)
 end
 
 function LuckyBlockService:_playSpawnAnimation(block: Model, basePivot: CFrame, halfHeight: number)
@@ -258,6 +272,102 @@ function LuckyBlockService:_playSpawnAnimation(block: Model, basePivot: CFrame, 
 			Pivot = basePivot,
 		})
 	end)
+end
+
+function LuckyBlockService:_playBreakAnimationAndDestroy(block: Model)
+	if block:GetAttribute("IsBreaking") == true then
+		return
+	end
+
+	block:SetAttribute("IsBreaking", true)
+
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+			spr.stop(descendant)
+			spr.target(descendant, 1, 5.5, {
+				Transparency = 1,
+			})
+		elseif descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = false
+		elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+			spr.stop(descendant)
+			spr.target(descendant, 1, 5.5, {
+				Transparency = 1,
+			})
+		end
+	end
+
+	local basePivot = block:GetPivot()
+	local baseScale = block:GetScale()
+	local _, size = block:GetBoundingBox()
+	local halfHeight = size.Y * 0.5
+	local targetScale = baseScale * BREAK_ANIMATION_SCALE_MULTIPLIER
+	local targetPivot = self:_pivotForScaleGrounded(basePivot, halfHeight, targetScale, baseScale)
+	spr.stop(block)
+	block:ScaleTo(baseScale)
+	block:PivotTo(basePivot)
+	spr.target(block, 0.78, 5.5, {
+		Scale = targetScale,
+		Pivot = targetPivot,
+	})
+
+	task.delay(BREAK_ANIMATION_DURATION + 0.05, function()
+		for _, descendant in block:GetDescendants() do
+			if descendant:IsA("BasePart") or descendant:IsA("Decal") or descendant:IsA("Texture") then
+				descendant.Transparency = 1
+			end
+		end
+
+		if block.Parent ~= nil then
+			block:Destroy()
+		end
+	end)
+end
+
+function LuckyBlockService:_emitHitParticles(block: Model)
+	local emitCount = block:GetAttribute("HitParticleEmitCount")
+	if typeof(emitCount) ~= "number" or emitCount <= 0 then
+		emitCount = DEFAULT_HIT_PARTICLE_EMIT_COUNT
+	end
+
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("ParticleEmitter") then
+			local worldCFrame = block:GetPivot()
+			local emitterParent = descendant.Parent
+			if emitterParent and emitterParent:IsA("Attachment") then
+				worldCFrame = emitterParent.WorldCFrame
+			elseif emitterParent and emitterParent:IsA("BasePart") then
+				worldCFrame = emitterParent.CFrame
+			end
+
+			local terrain = Workspace.Terrain
+			local tempAttachment = Instance.new("Attachment")
+			tempAttachment.Name = "LuckyBlockParticleAttachment"
+			tempAttachment.CFrame = worldCFrame
+			tempAttachment.Parent = terrain
+
+			local detachedEmitter = descendant:Clone()
+			detachedEmitter.Parent = tempAttachment
+			detachedEmitter.Enabled = true
+			detachedEmitter:Emit(math.floor(emitCount))
+			task.delay(0.05, function()
+				if detachedEmitter.Parent ~= nil then
+					detachedEmitter.Enabled = false
+				end
+			end)
+
+			local lifetime = detachedEmitter.Lifetime
+			local cleanupDelay = math.max(lifetime.Min, lifetime.Max) + DETACHED_PARTICLE_CLEANUP_PADDING
+			task.delay(cleanupDelay, function()
+				if tempAttachment.Parent ~= nil then
+					tempAttachment:Destroy()
+				end
+			end)
+		end
+	end
 end
 
 function LuckyBlockService:_runSpawner()
@@ -313,7 +423,15 @@ function LuckyBlockService:_bindLuckyBlockContainer()
 	end)
 end
 
-function LuckyBlockService:_initializeBlock(block: Model)
+function LuckyBlockService:_initializeBlock(block: Model, spawnType: string?)
+	block:SetAttribute("IsBreaking", false)
+
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = false
+		end
+	end
+
 	local maxHealth = block:GetAttribute("MaxHealth")
 	if typeof(maxHealth) ~= "number" or maxHealth <= 0 then
 		maxHealth = DEFAULT_MAX_HEALTH
@@ -325,6 +443,14 @@ function LuckyBlockService:_initializeBlock(block: Model)
 		health = maxHealth
 	end
 	block:SetAttribute("Health", math.clamp(health, 0, maxHealth))
+
+	local rarity = block:GetAttribute("Rarity")
+	if typeof(rarity) ~= "string" or rarity == "" then
+		rarity = LuckyBlockRarityConstants.getRarityFromSpawnType(spawnType)
+	else
+		rarity = LuckyBlockRarityConstants.normalizeRarity(rarity)
+	end
+	block:SetAttribute("Rarity", rarity)
 end
 
 function LuckyBlockService:_isValidBlock(block: Instance): boolean
@@ -337,7 +463,15 @@ function LuckyBlockService:_isValidBlock(block: Instance): boolean
 		return false
 	end
 
-	return block.Parent == container
+	if block.Parent ~= container then
+		return false
+	end
+
+	if block:GetAttribute("IsBreaking") == true then
+		return false
+	end
+
+	return true
 end
 
 function LuckyBlockService:_canHitBlock(player: Player, block: Model): boolean
@@ -378,18 +512,18 @@ function LuckyBlockService:_canHitBlock(player: Player, block: Model): boolean
 	return true
 end
 
-function LuckyBlockService.Client:TryHitBlock(player: Player, block: Instance): boolean
+function LuckyBlockService.Client:TryHitBlock(player: Player, block: Instance): (boolean, boolean)
 	return self.Server:_tryHitBlock(player, block)
 end
 
-function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): boolean
+function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boolean, boolean)
 	if not self:_isValidBlock(block) then
-		return false
+		return false, false
 	end
 
 	local typedBlock = block :: Model
 	if not self:_canHitBlock(player, typedBlock) then
-		return false
+		return false, false
 	end
 
 	local maxHealth = typedBlock:GetAttribute("MaxHealth")
@@ -405,13 +539,18 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): boolea
 
 	health = math.clamp(health, 0, maxHealth)
 	if health <= 0 then
-		return false
+		return false, false
 	end
 
 	local newHealth = math.max(0, health - DAMAGE_PER_HIT)
 	typedBlock:SetAttribute("Health", newHealth)
+	self:_emitHitParticles(typedBlock)
+	local broke = newHealth <= 0
+	if broke then
+		self:_playBreakAnimationAndDestroy(typedBlock)
+	end
 
-	return true
+	return true, broke
 end
 
 return LuckyBlockService

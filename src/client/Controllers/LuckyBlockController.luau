@@ -7,6 +7,8 @@ local Packages = ReplicatedStorage.Packages
 local Shared = ReplicatedStorage.Shared
 local Knit = require(Packages.Knit)
 local spr = require(Shared.Spr)
+local SoundUtil = require(Shared.SoundUtil)
+local LuckyBlockRarityConstants = require(Shared.LuckyBlockRarityConstants)
 local vide = require(Packages.Vide)
 local create = vide.create
 local source = vide.source
@@ -15,17 +17,22 @@ local root = vide.root
 
 local BILLBOARD_RANGE_SQ = 30 * 30
 local BILLBOARD_SIZE = UDim2.fromScale(10.125, 6.75)
+local COLLECT_BILLBOARD_SIZE = UDim2.fromScale(3, 1.5)
 local DETECTION_RANGE_SQ = 8 * 8
 local MAX_HEALTH_FALLBACK = 100
 local DEBRIS_MIN = 1
 local DEBRIS_MAX = 3
+local DEBRIS_STAGGER_TIME = 0.1
 local DEBRIS_TEMPLATE = ReplicatedStorage.Assets.LuckyBlockDebris
 local DEBRIS_LAUNCH_TIME = 0.15
 local DEBRIS_PULL_ACCEL = 250
 local DEBRIS_COLLECT_DIST_SQ = 3 * 3
+local COLLECT_TEXT_FADE_DELAY = 2
+local COLLECT_TEXT_FADE_CLEAR_DELAY = 0.3
 local FOV_IMPULSE_AMOUNT = 2
 local FOV_IMPULSE_HOLD = 0.05
-
+local LOCK_ON_TURN_RESPONSE = 14
+local DAMAGE_PER_HIT = 10
 
 local random = Random.new()
 
@@ -50,13 +57,19 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	self._progressPulseTargets[block] = progressPulseTarget
 	local timeLeftTarget = source(0)
 	self._timeLeftTargets[block] = timeLeftTarget
+	local rarityTarget = source(LuckyBlockRarityConstants.DEFAULT)
+	self._rarityTargets[block] = rarityTarget
+	local rarityColorTarget = source(LuckyBlockRarityConstants.getColor(LuckyBlockRarityConstants.DEFAULT))
+	self._rarityColorTargets[block] = rarityColorTarget
+	local rarityStrokeColorTarget = source(LuckyBlockRarityConstants.getStrokeColor(LuckyBlockRarityConstants.DEFAULT))
+	self._rarityStrokeColorTargets[block] = rarityStrokeColorTarget
 
 	local destroy = root(function()
 		local animatedScale = spring(scaleTarget, 0.3, 0.6)
 		local animatedHealthFraction = spring(healthFractionTarget, 0.14, 1.05)
 		local animatedProgressPulse = spring(progressPulseTarget, 0.12, 1)
 
-		create "BillboardGui" {
+		create("BillboardGui")({
 			Name = "BillboardGui",
 			Active = true,
 			Brightness = 1.5,
@@ -70,21 +83,21 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 			ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 			Parent = attachment,
 
-			create "Frame" {
+			create("Frame")({
 				Name = "Inner",
 				AnchorPoint = Vector2.new(0.5, 0.5),
 				BackgroundTransparency = 1,
 				Position = UDim2.fromScale(0.5, 0.5),
 				Size = UDim2.fromScale(1, 1),
 
-				create "UIListLayout" {
+				create("UIListLayout")({
 					Name = "UIListLayout",
 					HorizontalAlignment = Enum.HorizontalAlignment.Center,
 					SortOrder = Enum.SortOrder.LayoutOrder,
 					VerticalAlignment = Enum.VerticalAlignment.Center,
-				},
+				}),
 
-				create "TextLabel" {
+				--[[ create "TextLabel" {
 					Name = "Mutation",
 					AnchorPoint = Vector2.new(0.5, 0.5),
 					BackgroundTransparency = 1,
@@ -114,9 +127,9 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.05,
 					},
-				},
+				}, ]]
 
-				create "TextLabel" {
+				create("TextLabel")({
 					Name = "Name",
 					AnchorPoint = Vector2.new(0.5, 0.5),
 					BackgroundTransparency = 1,
@@ -127,29 +140,29 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 					),
 					LayoutOrder = -3,
 					Size = UDim2.fromScale(1, 0.2),
-					Text = "OdinDinDinDun",
+					Text = block.Name,
 					TextColor3 = Color3.new(1, 1, 1),
 					TextScaled = true,
 					ZIndex = 2,
 
-					create "UIGradient" {
+					create("UIGradient")({
 						Name = "UIGradient",
 						Color = ColorSequence.new({
 							ColorSequenceKeypoint.new(0, Color3.fromRGB(165, 196, 199)),
 							ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
 						}),
 						Rotation = -90,
-					},
+					}),
 
-					create "UIStroke" {
+					create("UIStroke")({
 						Name = "UIStroke",
 						LineJoinMode = Enum.LineJoinMode.Miter,
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.05,
-					},
-				},
+					}),
+				}),
 
-				create "TextLabel" {
+				create("TextLabel")({
 					Name = "Rarity",
 					AnchorPoint = Vector2.new(0.5, 0.5),
 					BackgroundTransparency = 1,
@@ -160,20 +173,26 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 					),
 					LayoutOrder = -2,
 					Size = UDim2.fromScale(1, 0.2),
-					Text = "Celestial",
-					TextColor3 = Color3.new(1, 1, 1),
+					Text = function()
+						return rarityTarget()
+					end,
+					TextColor3 = function()
+						return rarityColorTarget()
+					end,
 					TextScaled = true,
 
-					create "UIStroke" {
+					create("UIStroke")({
 						Name = "UIStroke",
-						Color = Color3.new(1, 1, 1),
+						Color = function()
+							return rarityStrokeColorTarget()
+						end,
 						LineJoinMode = Enum.LineJoinMode.Miter,
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.05,
-					},
-				},
+					}),
+				}),
 
-				create "TextLabel" {
+				--[[ create("TextLabel")({
 					Name = "Earnings",
 					AnchorPoint = Vector2.new(0.5, 0.5),
 					BackgroundTransparency = 1,
@@ -188,30 +207,30 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 					TextColor3 = Color3.new(1, 1, 1),
 					TextScaled = true,
 
-					create "UIGradient" {
+					create("UIGradient")({
 						Name = "UIGradient",
 						Color = ColorSequence.new({
 							ColorSequenceKeypoint.new(0, Color3.fromRGB(55, 255, 0)),
 							ColorSequenceKeypoint.new(1, Color3.fromRGB(132, 255, 0)),
 						}),
 						Rotation = -90,
-					},
+					}),
 
-					create "UIStroke" {
+					create("UIStroke")({
 						Name = "UIStroke",
 						LineJoinMode = Enum.LineJoinMode.Miter,
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.05,
-					},
-				},
+					}),
+				}), ]]
 
-				create "Frame" {
+				create("Frame")({
 					Name = "TimeLeft",
 					BackgroundTransparency = 1,
 					LayoutOrder = -5,
 					Size = UDim2.fromScale(0.5, 0.2),
 
-					create "ImageLabel" {
+					create("ImageLabel")({
 						Name = "ImageLabel",
 						AnchorPoint = Vector2.new(0, 0.5),
 						BackgroundTransparency = 1,
@@ -220,9 +239,9 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						Position = UDim2.fromScale(0, 0.5),
 						ScaleType = Enum.ScaleType.Fit,
 						Size = UDim2.fromScale(0.3, 1),
-					},
+					}),
 
-					create "TextLabel" {
+					create("TextLabel")({
 						Name = "TimeLeft",
 						AnchorPoint = Vector2.new(0.5, 0.5),
 						BackgroundTransparency = 1,
@@ -240,33 +259,33 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						TextScaled = true,
 						TextXAlignment = Enum.TextXAlignment.Left,
 
-						create "UIGradient" {
+						create("UIGradient")({
 							Name = "UIGradient",
 							Color = ColorSequence.new({
 								ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 170, 255)),
 								ColorSequenceKeypoint.new(1, Color3.fromRGB(85, 85, 255)),
 							}),
 							Rotation = -90,
-						},
+						}),
 
-						create "UIStroke" {
+						create("UIStroke")({
 							Name = "UIStroke",
 							LineJoinMode = Enum.LineJoinMode.Miter,
 							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 							Thickness = 0.05,
-						},
-					},
+						}),
+					}),
 
-					create "UIListLayout" {
+					create("UIListLayout")({
 						Name = "UIListLayout",
 						FillDirection = Enum.FillDirection.Horizontal,
 						HorizontalAlignment = Enum.HorizontalAlignment.Center,
 						Padding = UDim.new(0.05, 0),
 						SortOrder = Enum.SortOrder.LayoutOrder,
-					},
-				},
+					}),
+				}),
 
-				create "Frame" {
+				create("Frame")({
 					Name = "ProgressBar",
 					BackgroundColor3 = Color3.fromRGB(23, 29, 38),
 					BackgroundTransparency = 0.15,
@@ -276,21 +295,21 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						return UDim2.fromScale(0.85 * scale, 0.13 * scale)
 					end,
 
-					create "UICorner" {
+					create("UICorner")({
 						Name = "UICorner",
 						CornerRadius = UDim.new(0.5, 0),
-					},
+					}),
 
-					create "UIStroke" {
+					create("UIStroke")({
 						Name = "UIStroke",
 						Color = Color3.fromRGB(255, 255, 255),
 						LineJoinMode = Enum.LineJoinMode.Round,
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.03,
 						Transparency = 0.2,
-					},
+					}),
 
-					create "Frame" {
+					create("Frame")({
 						Name = "FillMask",
 						BackgroundTransparency = 1,
 						ClipsDescendants = true,
@@ -299,12 +318,12 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 							return UDim2.fromScale(math.clamp(animatedHealthFraction(), 0, 1) * 0.98, 0.84)
 						end,
 
-						create "UICorner" {
+						create("UICorner")({
 							Name = "UICorner",
 							CornerRadius = UDim.new(0.5, 0),
-						},
+						}),
 
-						create "ImageLabel" {
+						create("ImageLabel")({
 							Name = "Fill",
 							BackgroundTransparency = 0,
 							Image = "rbxassetid://6927295847",
@@ -318,23 +337,23 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 							end,
 							TileSize = UDim2.fromScale(0.08, 0.8),
 
-							create "UICorner" {
+							create("UICorner")({
 								Name = "UICorner",
 								CornerRadius = UDim.new(0.5, 0),
-							},
+							}),
 
-							create "UIGradient" {
+							create("UIGradient")({
 								Name = "UIGradient",
 								Color = ColorSequence.new({
 									ColorSequenceKeypoint.new(0, Color3.fromRGB(57, 150, 78)),
 									ColorSequenceKeypoint.new(1, Color3.fromRGB(33, 104, 51)),
 								}),
 								Rotation = -90,
-							},
-						},
-					},
+							}),
+						}),
+					}),
 
-					create "TextLabel" {
+					create("TextLabel")({
 						Name = "ProgressText",
 						AnchorPoint = Vector2.new(0.5, 0.5),
 						BackgroundTransparency = 1,
@@ -352,24 +371,195 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						TextScaled = true,
 						ZIndex = 2,
 
-						create "UIStroke" {
+						create("UIStroke")({
 							Name = "UIStroke",
 							Color = Color3.fromRGB(0, 0, 0),
 							LineJoinMode = Enum.LineJoinMode.Round,
 							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 							Thickness = 0.05,
 							Transparency = 0.15,
-						},
-					},
-				},
-			},
-		}
+						}),
+					}),
+				}),
+			}),
+		})
 	end)
 
 	self._uiRoots[block] = { destroy = destroy, attachment = attachment }
 	self:_updateHealthForBlock(block)
 	self:_updateTimeLeftForBlock(block)
+	self:_updateRarityForBlock(block)
 	self:_pulseProgressBar(block)
+end
+
+function LuckyBlockController:_setupCollectBillboard(hrp: BasePart)
+	self:_cleanupCollectBillboard()
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "LuckyBlockCollectAttachment"
+	attachment.Position = Vector3.new(0, 0, 0)
+	attachment.Parent = hrp
+
+	local visibleTarget = source(0)
+	local pulseTarget = source(1)
+	local countTarget = source(0)
+	local faceTarget = source(0)
+	self._collectVisibleTarget = visibleTarget
+	self._collectPulseTarget = pulseTarget
+	self._collectCountTarget = countTarget
+	self._collectFaceTarget = faceTarget
+	self._collectCount = 0
+	self._collectTextVersion = 0
+
+	local destroy = root(function()
+		local animatedVisible = spring(visibleTarget, 0.22, 0.95)
+		local animatedPulse = spring(pulseTarget, 0.14, 1)
+		local animatedFace = spring(faceTarget, 0.22, 0.9)
+
+		create("BillboardGui")({
+			Name = "CollectBillboardGui",
+			Active = false,
+			AlwaysOnTop = true,
+			Brightness = 1.5,
+			MaxDistance = 100,
+			ResetOnSpawn = false,
+			Size = function()
+				local pulse = animatedPulse()
+				return UDim2.fromScale(COLLECT_BILLBOARD_SIZE.X.Scale * pulse, COLLECT_BILLBOARD_SIZE.Y.Scale * pulse)
+			end,
+			ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+			Parent = attachment,
+
+			create("Frame")({
+				Name = "CollectRow",
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Rotation = function()
+					return animatedFace()
+				end,
+				Size = UDim2.fromScale(1, 1),
+
+				create("UIListLayout")({
+					Name = "UIListLayout",
+					FillDirection = Enum.FillDirection.Horizontal,
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					Padding = UDim.new(0.03, 0),
+					SortOrder = Enum.SortOrder.LayoutOrder,
+				}),
+
+				create("ImageLabel")({
+					Name = "Icon",
+					BackgroundTransparency = 1,
+					Image = "rbxassetid://86094156392599",
+					ImageTransparency = function()
+						return 1 - math.clamp(animatedVisible(), 0, 1)
+					end,
+					LayoutOrder = 1,
+					ScaleType = Enum.ScaleType.Fit,
+					Size = UDim2.fromScale(0.66, 1),
+				}),
+
+				create("TextLabel")({
+					Name = "CollectText",
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = 2,
+					Size = UDim2.fromScale(0.74, 1),
+					Text = function()
+						local count = countTarget()
+						if count <= 0 then
+							return ""
+						end
+						return `+{count}`
+					end,
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+					TextTransparency = function()
+						return 1 - math.clamp(animatedVisible(), 0, 1)
+					end,
+
+					create("UIGradient")({
+						Name = "UIGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 248, 177)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 232, 125)),
+						}),
+						Rotation = -90,
+					}),
+
+					create("UIStroke")({
+						Name = "UIStroke",
+						Color = Color3.fromRGB(0, 0, 0),
+						LineJoinMode = Enum.LineJoinMode.Round,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.06,
+						Transparency = function()
+							return 0.15 + (1 - math.clamp(animatedVisible(), 0, 1)) * 0.85
+						end,
+					}),
+				}),
+			}),
+		})
+	end)
+
+	self._collectUiRoot = { destroy = destroy, attachment = attachment }
+end
+
+function LuckyBlockController:_cleanupCollectBillboard()
+	if self._collectUiRoot then
+		self._collectUiRoot.destroy()
+		self._collectUiRoot.attachment:Destroy()
+		self._collectUiRoot = nil
+	end
+
+	self._collectVisibleTarget = nil
+	self._collectPulseTarget = nil
+	self._collectCountTarget = nil
+	self._collectFaceTarget = nil
+	self._collectCount = 0
+	self._collectTextVersion = (self._collectTextVersion or 0) + 1
+end
+
+function LuckyBlockController:_onDebrisCollected()
+	local visibleTarget = self._collectVisibleTarget
+	local pulseTarget = self._collectPulseTarget
+	local countTarget = self._collectCountTarget
+	if not visibleTarget or not pulseTarget or not countTarget then
+		return
+	end
+
+	self._collectCount += 1
+	countTarget(self._collectCount)
+	visibleTarget(1)
+	pulseTarget(1.14)
+
+	task.delay(0.06, function()
+		if self._collectPulseTarget == pulseTarget then
+			pulseTarget(1)
+		end
+	end)
+
+	local version = (self._collectTextVersion or 0) + 1
+	self._collectTextVersion = version
+	task.delay(COLLECT_TEXT_FADE_DELAY, function()
+		if self._collectTextVersion ~= version then
+			return
+		end
+
+		visibleTarget(0)
+		task.delay(COLLECT_TEXT_FADE_CLEAR_DELAY, function()
+			if self._collectTextVersion ~= version then
+				return
+			end
+			self._collectCount = 0
+			countTarget(0)
+		end)
+	end)
 end
 
 function LuckyBlockController:_pulseProgressBar(block: Model)
@@ -420,6 +610,20 @@ function LuckyBlockController:_updateTimeLeftForBlock(block: Model)
 	target(math.max(0, despawnAt - workspace:GetServerTimeNow()))
 end
 
+function LuckyBlockController:_updateRarityForBlock(block: Model)
+	local rarityTarget = self._rarityTargets[block]
+	local rarityColorTarget = self._rarityColorTargets[block]
+	local rarityStrokeColorTarget = self._rarityStrokeColorTargets[block]
+	if not rarityTarget or not rarityColorTarget or not rarityStrokeColorTarget then
+		return
+	end
+
+	local rarity = LuckyBlockRarityConstants.normalizeRarity(block:GetAttribute("Rarity"))
+	rarityTarget(rarity)
+	rarityColorTarget(LuckyBlockRarityConstants.getColor(rarity))
+	rarityStrokeColorTarget(LuckyBlockRarityConstants.getStrokeColor(rarity))
+end
+
 function LuckyBlockController:_setupBlock(block: Model)
 	local adornee = block.PrimaryPart or block:FindFirstChildWhichIsA("BasePart", true)
 	if adornee then
@@ -448,6 +652,9 @@ function LuckyBlockController:_setupBlock(block: Model)
 		block:GetAttributeChangedSignal("DespawnAt"):Connect(function()
 			self:_updateTimeLeftForBlock(block)
 		end),
+		block:GetAttributeChangedSignal("Rarity"):Connect(function()
+			self:_updateRarityForBlock(block)
+		end),
 	}
 end
 
@@ -462,6 +669,9 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 	self._healthFractionTargets[block] = nil
 	self._progressPulseTargets[block] = nil
 	self._timeLeftTargets[block] = nil
+	self._rarityTargets[block] = nil
+	self._rarityColorTargets[block] = nil
+	self._rarityStrokeColorTargets[block] = nil
 	if self._pendingConn and self._pendingConn[block] then
 		self._pendingConn[block]:Disconnect()
 		self._pendingConn[block] = nil
@@ -560,93 +770,96 @@ end
 
 function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3)
 	local count = random:NextInteger(DEBRIS_MIN, DEBRIS_MAX)
-	for _ = 1, count do
-		local debris = DEBRIS_TEMPLATE:Clone()
-		debris.Anchored = true
-		debris.CanCollide = false
-		debris.CFrame = CFrame.new(blockPosition)
-		debris.Parent = workspace
+	for i = 1, count do
+		task.delay((i - 1) * DEBRIS_STAGGER_TIME, function()
+			local debris = DEBRIS_TEMPLATE:Clone()
+			debris.Anchored = true
+			debris.CanCollide = false
+			debris.CFrame = CFrame.new(blockPosition)
+			debris.Parent = workspace
 
-		-- Random launch velocity: outward + upward
-		local angle = random:NextNumber(0, math.pi * 2)
-		local horizontalSpeed = random:NextNumber(10, 25)
-		local verticalSpeed = random:NextNumber(35, 55)
-		local velocity = Vector3.new(
-			math.cos(angle) * horizontalSpeed,
-			verticalSpeed,
-			math.sin(angle) * horizontalSpeed
-		)
+			-- Random launch velocity: outward + upward
+			local angle = random:NextNumber(0, math.pi * 2)
+			local horizontalSpeed = random:NextNumber(10, 25)
+			local verticalSpeed = random:NextNumber(35, 55)
+			local velocity =
+				Vector3.new(math.cos(angle) * horizontalSpeed, verticalSpeed, math.sin(angle) * horizontalSpeed)
 
-		local originalSize = debris.Size
-		local elapsed = 0
-		local pulling = false
-		local connection
-		connection = RunService.Heartbeat:Connect(function(dt)
-			if not debris.Parent then
-				connection:Disconnect()
-				return
-			end
-
-			elapsed += dt
-			local pos = debris.Position
-
-			if not pulling then
-				-- Launch phase: move outward with simple gravity
-				velocity += Vector3.new(0, -196.2 * dt, 0)
-				pos += velocity * dt
-				debris.CFrame = CFrame.new(pos) * CFrame.Angles(
-					random:NextNumber(-0.5, 0.5) * dt,
-					random:NextNumber(-0.5, 0.5) * dt,
-					random:NextNumber(-0.5, 0.5) * dt
-				) * (debris.CFrame - debris.Position)
-
-				if elapsed >= DEBRIS_LAUNCH_TIME then
-					pulling = true
-				end
-			else
-				-- Pull phase: accelerate toward the player's HRP
-				local hrp = self._hrp
-				if not hrp then
-					debris:Destroy()
+			local originalSize = debris.Size
+			local elapsed = 0
+			local pulling = false
+			local connection
+			connection = RunService.Heartbeat:Connect(function(dt)
+				if not debris.Parent then
 					connection:Disconnect()
 					return
 				end
 
-				local target = hrp.Position
-				local delta = target - pos
-				local dist = delta.Magnitude
+				elapsed += dt
+				local pos = debris.Position
 
-				if dist < 0.01 then
-					debris:Destroy()
-					connection:Disconnect()
-					return
-				end
+				if not pulling then
+					-- Launch phase: move outward with simple gravity
+					velocity += Vector3.new(0, -196.2 * dt, 0)
+					pos += velocity * dt
+					debris.CFrame = CFrame.new(pos)
+						* CFrame.Angles(
+							random:NextNumber(-0.5, 0.5) * dt,
+							random:NextNumber(-0.5, 0.5) * dt,
+							random:NextNumber(-0.5, 0.5) * dt
+						)
+						* (debris.CFrame - debris.Position)
 
-				local dir = delta / dist
-
-				-- Accelerate toward player, building up speed
-				velocity = velocity + dir * DEBRIS_PULL_ACCEL * dt
-				-- Kill sideways velocity aggressively so it doesn't overshoot
-				local towardComponent = velocity:Dot(dir) * dir
-				local sideways = velocity - towardComponent
-				velocity = towardComponent + sideways * math.max(0, 1 - 15 * dt)
-
-				pos += velocity * dt
-				debris.CFrame = CFrame.new(pos)
-
-				-- Shrink as it gets close
-				local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
-				if distSq < DEBRIS_COLLECT_DIST_SQ then
-					local alpha = math.sqrt(distSq / DEBRIS_COLLECT_DIST_SQ)
-					debris.Size = originalSize * alpha
-
-					if distSq < 0.25 then
-						self:_impulseFov()
+					if elapsed >= DEBRIS_LAUNCH_TIME then
+						pulling = true
+					end
+				else
+					-- Pull phase: accelerate toward the player's HRP
+					local hrp = self._hrp
+					if not hrp then
 						debris:Destroy()
 						connection:Disconnect()
+						return
+					end
+
+					local target = hrp.Position
+					local delta = target - pos
+					local dist = delta.Magnitude
+
+					if dist < 0.01 then
+						debris:Destroy()
+						connection:Disconnect()
+						return
+					end
+
+					local dir = delta / dist
+
+					-- Accelerate toward player, building up speed
+					velocity = velocity + dir * DEBRIS_PULL_ACCEL * dt
+					-- Kill sideways velocity aggressively so it doesn't overshoot
+					local towardComponent = velocity:Dot(dir) * dir
+					local sideways = velocity - towardComponent
+					velocity = towardComponent + sideways * math.max(0, 1 - 15 * dt)
+
+					pos += velocity * dt
+					debris.CFrame = CFrame.new(pos)
+
+					-- Shrink as it gets close
+					local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
+					if distSq < DEBRIS_COLLECT_DIST_SQ then
+						local alpha = math.sqrt(distSq / DEBRIS_COLLECT_DIST_SQ)
+						debris.Size = originalSize * alpha
+
+						if distSq < 0.25 then
+							self:_impulseFov()
+							SoundUtil.playFromSoundsFolder("BlockSound")
+							self:_onDebrisCollected()
+							debris:Destroy()
+							connection:Disconnect()
+						end
 					end
 				end
-			end
+			end)
 		end)
 	end
 end
@@ -726,7 +939,9 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 
 	-- Phase 2: Stretch tall (rebound)
 	task.delay(0.08, function()
-		if self._animVersion[block] ~= version then return end
+		if self._animVersion[block] ~= version then
+			return
+		end
 		spr.target(block, 1, 18, {
 			Scale = orig.scale * stretchTall,
 			Pivot = self:_pivotForScale(orig, stretchTall),
@@ -736,7 +951,9 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	-- Phase 3: Subtle float upward (very slight lift)
 	local floatHeight = random:NextNumber(0.3, 0.5)
 	task.delay(0.18, function()
-		if self._animVersion[block] ~= version then return end
+		if self._animVersion[block] ~= version then
+			return
+		end
 		spr.target(block, 1, 14, {
 			Scale = orig.scale,
 			Pivot = restPivot + Vector3.new(0, floatHeight, 0),
@@ -745,7 +962,9 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 
 	-- Phase 4: Compress again (secondary bounce, back on ground)
 	task.delay(0.3, function()
-		if self._animVersion[block] ~= version then return end
+		if self._animVersion[block] ~= version then
+			return
+		end
 		spr.target(block, 1, 20, {
 			Scale = orig.scale * landingSquish,
 			Pivot = self:_pivotForScale(orig, landingSquish),
@@ -754,12 +973,28 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 
 	-- Phase 5: Bouncy settle to new resting rotation (underdamped = wobbly)
 	task.delay(0.4, function()
-		if self._animVersion[block] ~= version then return end
+		if self._animVersion[block] ~= version then
+			return
+		end
 		spr.target(block, 0.3, 5, {
 			Scale = orig.scale,
 			Pivot = restPivot,
 		})
 	end)
+end
+
+function LuckyBlockController:_resetBlockVisualToRest(block: Model)
+	local orig = self._originals[block]
+	if not orig then
+		return
+	end
+
+	-- Cancel any in-flight local hit squash/stretch before server break animation starts.
+	spr.stop(block)
+	block:ScaleTo(orig.scale)
+	block:PivotTo(orig.pivot)
+
+	self._animVersion[block] = (self._animVersion[block] or 0) + 1
 end
 
 function LuckyBlockController:_onInput()
@@ -777,9 +1012,16 @@ function LuckyBlockController:_onInput()
 
 	if closestBlock and closestSq <= DETECTION_RANGE_SQ then
 		if self._luckyBlockService then
-			local ok = self._luckyBlockService:TryHitBlock(closestBlock)
+			local healthBefore = closestBlock:GetAttribute("Health")
+			local willBreak = typeof(healthBefore) == "number" and healthBefore > 0 and healthBefore <= DAMAGE_PER_HIT
+			local ok, broke = self._luckyBlockService:TryHitBlock(closestBlock)
 			if ok then
-				self:_animateBlock(closestBlock, hrp.Position)
+				SoundUtil.playFromSoundsFolder("BlockImpact")
+				if broke or willBreak then
+					self:_resetBlockVisualToRest(closestBlock)
+				else
+					self:_animateBlock(closestBlock, hrp.Position)
+				end
 			end
 		end
 	end
@@ -795,11 +1037,21 @@ function LuckyBlockController:KnitInit()
 	self._healthFractionTargets = {}
 	self._progressPulseTargets = {}
 	self._timeLeftTargets = {}
+	self._rarityTargets = {}
+	self._rarityColorTargets = {}
+	self._rarityStrokeColorTargets = {}
 	self._healthConns = {}
 	self._cameraShake = nil
 	self._baseFov = nil
 	self._fovImpulseVersion = 0
 	self._luckyBlockService = nil
+	self._collectUiRoot = nil
+	self._collectVisibleTarget = nil
+	self._collectPulseTarget = nil
+	self._collectCountTarget = nil
+	self._collectFaceTarget = nil
+	self._collectCount = 0
+	self._collectTextVersion = 0
 end
 
 function LuckyBlockController:KnitStart()
@@ -815,6 +1067,7 @@ function LuckyBlockController:KnitStart()
 	-- Cache HumanoidRootPart reference on character spawn
 	local function onCharacterAdded(character: Model)
 		self._hrp = character:WaitForChild("HumanoidRootPart")
+		self:_setupCollectBillboard(self._hrp)
 	end
 
 	player.CharacterAdded:Connect(onCharacterAdded)
@@ -823,6 +1076,7 @@ function LuckyBlockController:KnitStart()
 	end
 
 	player.CharacterRemoving:Connect(function()
+		self:_cleanupCollectBillboard()
 		self._hrp = nil
 	end)
 
@@ -841,7 +1095,7 @@ function LuckyBlockController:KnitStart()
 	end
 
 	-- Update billboard visibility based on proximity + face nearest block when in range
-	RunService.Heartbeat:Connect(function()
+	RunService.Heartbeat:Connect(function(dt)
 		for _, block in self._blocks do
 			self:_updateTimeLeftForBlock(block)
 		end
@@ -852,12 +1106,32 @@ function LuckyBlockController:KnitStart()
 		end
 
 		local playerPos = hrp.Position
+		local faceTarget = self._collectFaceTarget
+		if faceTarget then
+			local camera = workspace.CurrentCamera
+			if camera then
+				local toCamera = camera.CFrame.Position - playerPos
+				local planar = Vector3.new(toCamera.X, 0, toCamera.Z)
+				if planar.Magnitude > 0.001 then
+					local right = Vector3.new(hrp.CFrame.RightVector.X, 0, hrp.CFrame.RightVector.Z)
+					if right.Magnitude > 0.001 then
+						local side = right.Unit:Dot(planar.Unit)
+						faceTarget(math.clamp(side * 10, -10, 10))
+					end
+				end
+			end
+		end
+
 		for _, block in self._blocks do
 			local scaleTarget = self._scaleTargets[block]
 			if scaleTarget then
-				local delta = block:GetPivot().Position - playerPos
-				local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
-				scaleTarget(if distSq <= BILLBOARD_RANGE_SQ then 1 else 0)
+				if block:GetAttribute("IsBreaking") == true then
+					scaleTarget(0)
+				else
+					local delta = block:GetPivot().Position - playerPos
+					local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
+					scaleTarget(if distSq <= BILLBOARD_RANGE_SQ then 1 else 0)
+				end
 			end
 		end
 
@@ -865,10 +1139,19 @@ function LuckyBlockController:KnitStart()
 		local closestBlock, closestSq = self:_getClosestBlock(playerPos)
 		if closestBlock and closestSq <= DETECTION_RANGE_SQ then
 			local blockPos = closestBlock:GetPivot().Position
-			local lookAt = Vector3.new(blockPos.X, playerPos.Y, blockPos.Z)
+			local targetDir = Vector3.new(blockPos.X - playerPos.X, 0, blockPos.Z - playerPos.Z)
 			local humanoid = hrp.Parent and hrp.Parent:FindFirstChildWhichIsA("Humanoid")
-			if humanoid and (lookAt - playerPos).Magnitude > 0.01 then
-				hrp.CFrame = CFrame.lookAt(playerPos, lookAt)
+			if humanoid and targetDir.Magnitude > 0.01 then
+				local currentDir = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+				if currentDir.Magnitude < 0.001 then
+					currentDir = targetDir
+				end
+
+				local blendAlpha = 1 - math.exp(-LOCK_ON_TURN_RESPONSE * dt)
+				local blendedDir = currentDir.Unit:Lerp(targetDir.Unit, math.clamp(blendAlpha, 0, 1))
+				if blendedDir.Magnitude > 0.001 then
+					hrp.CFrame = CFrame.lookAt(playerPos, playerPos + blendedDir.Unit)
+				end
 			end
 		end
 	end)
@@ -879,7 +1162,10 @@ function LuckyBlockController:KnitStart()
 			return
 		end
 
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
 			self:_onInput()
 		end
 	end)
