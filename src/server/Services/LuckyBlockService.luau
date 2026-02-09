@@ -29,6 +29,7 @@ local BREAK_ANIMATION_DURATION = 0.6
 local BREAK_ANIMATION_SCALE_MULTIPLIER = 1.75
 local DEFAULT_HIT_PARTICLE_EMIT_COUNT = 16
 local DETACHED_PARTICLE_CLEANUP_PADDING = 0.4
+local BLOCKS_PER_BREAK = 1
 
 local random = Random.new()
 
@@ -42,9 +43,11 @@ function LuckyBlockService:KnitInit()
 	self._boundContainer = nil
 	self._containerConn = nil
 	self._spawnThread = nil
+	self._dataService = nil
 end
 
 function LuckyBlockService:KnitStart()
+	self._dataService = Knit.GetService("DataService")
 	self:_bindLuckyBlockContainer()
 	workspace.ChildAdded:Connect(function(child)
 		if child:IsA("Folder") and child.Name == "Lucky Blocks" then
@@ -545,6 +548,9 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 	local newHealth = math.max(0, health - DAMAGE_PER_HIT)
 	typedBlock:SetAttribute("Health", newHealth)
 	self:_emitHitParticles(typedBlock)
+	if self._dataService then
+		self._dataService:AddBlocks(player, BLOCKS_PER_BREAK)
+	end
 	local broke = newHealth <= 0
 	if broke then
 		self:_playBreakAnimationAndDestroy(typedBlock)

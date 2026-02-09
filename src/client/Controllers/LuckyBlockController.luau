@@ -40,6 +40,10 @@ local LuckyBlockController = Knit.CreateController({
 	Name = "LuckyBlockController",
 })
 
+function LuckyBlockController:ConnectDebrisCollected(callback: () -> ())
+	return self._debrisCollectedEvent.Event:Connect(callback)
+end
+
 function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	local _, size = block:GetBoundingBox()
 	local blockPos = block:GetPivot().Position
@@ -526,6 +530,10 @@ function LuckyBlockController:_cleanupCollectBillboard()
 end
 
 function LuckyBlockController:_onDebrisCollected()
+	if self._debrisCollectedEvent then
+		self._debrisCollectedEvent:Fire()
+	end
+
 	local visibleTarget = self._collectVisibleTarget
 	local pulseTarget = self._collectPulseTarget
 	local countTarget = self._collectCountTarget
@@ -1052,6 +1060,7 @@ function LuckyBlockController:KnitInit()
 	self._collectFaceTarget = nil
 	self._collectCount = 0
 	self._collectTextVersion = 0
+	self._debrisCollectedEvent = Instance.new("BindableEvent")
 end
 
 function LuckyBlockController:KnitStart()
