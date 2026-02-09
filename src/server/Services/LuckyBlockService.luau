@@ -29,7 +29,8 @@ local BREAK_ANIMATION_DURATION = 0.6
 local BREAK_ANIMATION_SCALE_MULTIPLIER = 1.75
 local DEFAULT_HIT_PARTICLE_EMIT_COUNT = 16
 local DETACHED_PARTICLE_CLEANUP_PADDING = 0.4
-local BLOCKS_PER_BREAK = 1
+local BLOCKS_PER_HIT_MIN = 1
+local BLOCKS_PER_HIT_MAX = 3
 
 local random = Random.new()
 
@@ -515,11 +516,11 @@ function LuckyBlockService:_canHitBlock(player: Player, block: Model): boolean
 	return true
 end
 
-function LuckyBlockService.Client:TryHitBlock(player: Player, block: Instance): (boolean, boolean)
+function LuckyBlockService.Client:TryHitBlock(player: Player, block: Instance): (boolean, boolean, number)
 	return self.Server:_tryHitBlock(player, block)
 end
 
-function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boolean, boolean)
+function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boolean, boolean, number)
 	if not self:_isValidBlock(block) then
 		return false, false
 	end
@@ -548,15 +549,16 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 	local newHealth = math.max(0, health - DAMAGE_PER_HIT)
 	typedBlock:SetAttribute("Health", newHealth)
 	self:_emitHitParticles(typedBlock)
+	local blocksAwarded = random:NextInteger(BLOCKS_PER_HIT_MIN, BLOCKS_PER_HIT_MAX)
 	if self._dataService then
-		self._dataService:AddBlocks(player, BLOCKS_PER_BREAK)
+		self._dataService:AddBlocks(player, blocksAwarded)
 	end
 	local broke = newHealth <= 0
 	if broke then
 		self:_playBreakAnimationAndDestroy(typedBlock)
 	end
 
-	return true, broke
+	return true, broke, blocksAwarded
 end
 
 return LuckyBlockService

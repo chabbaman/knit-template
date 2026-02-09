@@ -20,8 +20,6 @@ local BILLBOARD_SIZE = UDim2.fromScale(10.125, 6.75)
 local COLLECT_BILLBOARD_SIZE = UDim2.fromScale(3, 1.5)
 local DETECTION_RANGE_SQ = 8 * 8
 local MAX_HEALTH_FALLBACK = 100
-local DEBRIS_MIN = 1
-local DEBRIS_MAX = 3
 local DEBRIS_STAGGER_TIME = 0.1
 local DEBRIS_TEMPLATE = ReplicatedStorage.Assets.LuckyBlockDebris
 local DEBRIS_LAUNCH_TIME = 0.15
@@ -33,6 +31,17 @@ local FOV_IMPULSE_AMOUNT = 2
 local FOV_IMPULSE_HOLD = 0.05
 local LOCK_ON_TURN_RESPONSE = 14
 local DAMAGE_PER_HIT = 10
+local INDICATOR_SIZE = 5
+local INDICATOR_HEIGHT_OFFSET = 0.15
+local INDICATOR_IMAGE = "rbxassetid://4885490162"
+local BREAK_PIECE_COUNT = 16
+local BREAK_PIECE_LIFETIME = 2
+local BREAK_PIECE_MIN_SIZE = 0.4
+local BREAK_PIECE_MAX_SIZE = 1.2
+local HIT_PIECE_COUNT = 3
+local HIT_PIECE_LIFETIME = 1.2
+local HIT_PIECE_MIN_SIZE = 0.35
+local HIT_PIECE_MAX_SIZE = 0.7
 
 local random = Random.new()
 
@@ -71,6 +80,10 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	self._rarityColorTargets[block] = rarityColorTarget
 	local rarityStrokeColorTarget = source(LuckyBlockRarityConstants.getStrokeColor(LuckyBlockRarityConstants.DEFAULT))
 	self._rarityStrokeColorTargets[block] = rarityStrokeColorTarget
+	local rarityGradientTarget = source(LuckyBlockRarityConstants.getGradient(LuckyBlockRarityConstants.DEFAULT))
+	self._rarityGradientTargets[block] = rarityGradientTarget
+	local indicatorVisibleTarget = source(0)
+	self._indicatorVisibleTargets[block] = indicatorVisibleTarget
 
 	local destroy = root(function()
 		local animatedScale = spring(scaleTarget, 0.3, 0.6)
@@ -155,15 +168,17 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 
 					create("UIGradient")({
 						Name = "UIGradient",
-						Color = ColorSequence.new({
-							ColorSequenceKeypoint.new(0, Color3.fromRGB(165, 196, 199)),
-							ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
-						}),
+						Color = function()
+							return rarityGradientTarget()
+						end,
 						Rotation = -90,
 					}),
 
 					create("UIStroke")({
 						Name = "UIStroke",
+						Color = function()
+							return rarityStrokeColorTarget()
+						end,
 						LineJoinMode = Enum.LineJoinMode.Miter,
 						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 						Thickness = 0.05,
@@ -393,7 +408,51 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 		})
 	end)
 
-	self._uiRoots[block] = { destroy = destroy, attachment = attachment }
+	local indicatorPart = Instance.new("Part")
+	indicatorPart.Name = "LuckyBlockIndicator"
+	indicatorPart.Anchored = true
+	indicatorPart.CanCollide = false
+	indicatorPart.CanQuery = false
+	indicatorPart.CanTouch = false
+	indicatorPart.Size = Vector3.new(INDICATOR_SIZE, 0.05, INDICATOR_SIZE)
+	indicatorPart.Transparency = 1
+	indicatorPart.CFrame = CFrame.new(blockPos - Vector3.new(0, size.Y / 2 - INDICATOR_HEIGHT_OFFSET, 0))
+		* CFrame.Angles(0, 0, 0)
+	indicatorPart.Parent = workspace
+
+	local indicatorDestroy = root(function()
+		local animatedVisible = spring(indicatorVisibleTarget, 0.3, 0.7)
+
+		create("SurfaceGui")({
+			Name = "IndicatorGui",
+			Face = Enum.NormalId.Top,
+			Brightness = 1.5,
+			LightInfluence = 0,
+			MaxDistance = 50,
+			PixelsPerStud = 100,
+			SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud,
+			Parent = indicatorPart,
+
+			create("ImageLabel")({
+				Name = "Circle",
+				BackgroundTransparency = 1,
+				Image = INDICATOR_IMAGE,
+				ImageColor3 = Color3.new(1, 1, 1),
+				ImageTransparency = function()
+					return 1 - math.clamp(animatedVisible(), 0, 1)
+				end,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = function()
+					local s = math.clamp(animatedVisible(), 0, 1)
+					return UDim2.fromScale(s, s)
+				end,
+				ScaleType = Enum.ScaleType.Fit,
+			}),
+		})
+	end)
+
+	self._uiRoots[block] = { destroy = destroy, attachment = attachment, indicatorPart = indicatorPart, indicatorDestroy = indicatorDestroy }
 	self:_updateHealthForBlock(block)
 	self:_updateTimeLeftForBlock(block)
 	self:_updateRarityForBlock(block)
@@ -626,7 +685,8 @@ function LuckyBlockController:_updateRarityForBlock(block: Model)
 	local rarityTarget = self._rarityTargets[block]
 	local rarityColorTarget = self._rarityColorTargets[block]
 	local rarityStrokeColorTarget = self._rarityStrokeColorTargets[block]
-	if not rarityTarget or not rarityColorTarget or not rarityStrokeColorTarget then
+	local rarityGradientTarget = self._rarityGradientTargets[block]
+	if not rarityTarget or not rarityColorTarget or not rarityStrokeColorTarget or not rarityGradientTarget then
 		return
 	end
 
@@ -634,6 +694,7 @@ function LuckyBlockController:_updateRarityForBlock(block: Model)
 	rarityTarget(rarity)
 	rarityColorTarget(LuckyBlockRarityConstants.getColor(rarity))
 	rarityStrokeColorTarget(LuckyBlockRarityConstants.getStrokeColor(rarity))
+	rarityGradientTarget(LuckyBlockRarityConstants.getGradient(rarity))
 end
 
 function LuckyBlockController:_setupBlock(block: Model)
@@ -675,6 +736,12 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 	if entry then
 		entry.destroy()
 		entry.attachment:Destroy()
+		if entry.indicatorDestroy then
+			entry.indicatorDestroy()
+		end
+		if entry.indicatorPart then
+			entry.indicatorPart:Destroy()
+		end
 		self._uiRoots[block] = nil
 	end
 	self._scaleTargets[block] = nil
@@ -684,6 +751,8 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 	self._rarityTargets[block] = nil
 	self._rarityColorTargets[block] = nil
 	self._rarityStrokeColorTargets[block] = nil
+	self._rarityGradientTargets[block] = nil
+	self._indicatorVisibleTargets[block] = nil
 	if self._pendingConn and self._pendingConn[block] then
 		self._pendingConn[block]:Disconnect()
 		self._pendingConn[block] = nil
@@ -780,8 +849,7 @@ function LuckyBlockController:_pivotForScale(originals, scaleFactor: number, nud
 	return originals.pivot + offset
 end
 
-function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3)
-	local count = random:NextInteger(DEBRIS_MIN, DEBRIS_MAX)
+function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3, count: number)
 	for i = 1, count do
 		task.delay((i - 1) * DEBRIS_STAGGER_TIME, function()
 			local debris = DEBRIS_TEMPLATE:Clone()
@@ -904,7 +972,7 @@ function LuckyBlockController:_impulseFov()
 	end)
 end
 
-function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector3)
+function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector3, debrisCount: number)
 	local orig = self:_getOriginals(block)
 
 	-- Cancel any in-flight springs and reset to rest pose instantly
@@ -913,7 +981,7 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	block:PivotTo(orig.pivot)
 
 	-- Spawn debris from the block's position
-	self:_spawnDebris(block, orig.pivot.Position)
+	self:_spawnDebris(block, orig.pivot.Position, debrisCount)
 
 	-- Camera shake on hit
 	self._cameraShake:Shake(0.3, 0.15, 25)
@@ -995,6 +1063,126 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	end)
 end
 
+function LuckyBlockController:_spawnBreakEffect(block: Model, blockPosition: Vector3)
+	local parts = {}
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+
+	if #parts == 0 then
+		return
+	end
+
+	for _ = 1, BREAK_PIECE_COUNT do
+		local original = parts[random:NextInteger(1, #parts)]
+		local piece = original:Clone()
+
+		piece:ClearAllChildren()
+		local s = random:NextNumber(BREAK_PIECE_MIN_SIZE, BREAK_PIECE_MAX_SIZE)
+		piece.Size = Vector3.new(s, s, s)
+		piece.Anchored = false
+		piece.CanCollide = false
+		piece.CanQuery = false
+		piece.CanTouch = false
+		piece.Transparency = 0
+
+		local offset = Vector3.new(
+			random:NextNumber(-1, 1),
+			random:NextNumber(0, 0.5),
+			random:NextNumber(-1, 1)
+		)
+		piece.CFrame = CFrame.new(blockPosition + offset)
+			* CFrame.Angles(
+				random:NextNumber(0, math.pi * 2),
+				random:NextNumber(0, math.pi * 2),
+				random:NextNumber(0, math.pi * 2)
+			)
+		piece.Parent = workspace
+
+		local angle = random:NextNumber(0, math.pi * 2)
+		local hSpeed = random:NextNumber(12, 30)
+		local vSpeed = random:NextNumber(35, 60)
+		piece.AssemblyLinearVelocity = Vector3.new(
+			math.cos(angle) * hSpeed,
+			vSpeed,
+			math.sin(angle) * hSpeed
+		)
+		piece.AssemblyAngularVelocity = Vector3.new(
+			random:NextNumber(-10, 10),
+			random:NextNumber(-10, 10),
+			random:NextNumber(-10, 10)
+		)
+
+		task.delay(BREAK_PIECE_LIFETIME, function()
+			if piece.Parent then
+				piece:Destroy()
+			end
+		end)
+	end
+end
+
+function LuckyBlockController:_spawnHitEffect(block: Model, blockPosition: Vector3)
+	local parts = {}
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+
+	if #parts == 0 then
+		return
+	end
+
+	for _ = 1, HIT_PIECE_COUNT do
+		local original = parts[random:NextInteger(1, #parts)]
+		local piece = original:Clone()
+
+		piece:ClearAllChildren()
+		local s = random:NextNumber(HIT_PIECE_MIN_SIZE, HIT_PIECE_MAX_SIZE)
+		piece.Size = Vector3.new(s, s, s)
+		piece.Anchored = false
+		piece.CanCollide = false
+		piece.CanQuery = false
+		piece.CanTouch = false
+		piece.Transparency = 0
+
+		local offset = Vector3.new(
+			random:NextNumber(-0.5, 0.5),
+			random:NextNumber(0, 0.3),
+			random:NextNumber(-0.5, 0.5)
+		)
+		piece.CFrame = CFrame.new(blockPosition + offset)
+			* CFrame.Angles(
+				random:NextNumber(0, math.pi * 2),
+				random:NextNumber(0, math.pi * 2),
+				random:NextNumber(0, math.pi * 2)
+			)
+		piece.Parent = workspace
+
+		local angle = random:NextNumber(0, math.pi * 2)
+		local hSpeed = random:NextNumber(8, 18)
+		local vSpeed = random:NextNumber(25, 40)
+		piece.AssemblyLinearVelocity = Vector3.new(
+			math.cos(angle) * hSpeed,
+			vSpeed,
+			math.sin(angle) * hSpeed
+		)
+		piece.AssemblyAngularVelocity = Vector3.new(
+			random:NextNumber(-6, 6),
+			random:NextNumber(-6, 6),
+			random:NextNumber(-6, 6)
+		)
+
+		task.delay(HIT_PIECE_LIFETIME, function()
+			if piece.Parent then
+				piece:Destroy()
+			end
+		end)
+	end
+end
+
 function LuckyBlockController:_resetBlockVisualToRest(block: Model)
 	local orig = self._originals[block]
 	if not orig then
@@ -1026,16 +1214,22 @@ function LuckyBlockController:_onInput()
 		if self._luckyBlockService then
 			local healthBefore = closestBlock:GetAttribute("Health")
 			local willBreak = typeof(healthBefore) == "number" and healthBefore > 0 and healthBefore <= DAMAGE_PER_HIT
-			local ok, broke = self._luckyBlockService:TryHitBlock(closestBlock)
-			if ok then
-				SoundUtil.playFromSoundsFolder("BlockImpact")
-				if broke or willBreak then
-					self:_resetBlockVisualToRest(closestBlock)
-					self._blockBrokenEvent:Fire()
-				else
-					self:_animateBlock(closestBlock, hrp.Position)
+			local blockPosition = closestBlock:GetPivot().Position
+			self._luckyBlockService:TryHitBlock(closestBlock):andThen(function(ok, broke, blocksAwarded)
+				if ok then
+					SoundUtil.playFromSoundsFolder("BlockImpact")
+					if broke or willBreak then
+						SoundUtil.playFromSoundsFolder("BlockReward")
+						self:_spawnBreakEffect(closestBlock, blockPosition)
+						self:_spawnDebris(closestBlock, blockPosition, blocksAwarded or 1)
+						self:_resetBlockVisualToRest(closestBlock)
+						self._blockBrokenEvent:Fire()
+					else
+						self:_spawnHitEffect(closestBlock, blockPosition)
+						self:_animateBlock(closestBlock, hrp.Position, blocksAwarded or 1)
+					end
 				end
-			end
+			end)
 		end
 	end
 end
@@ -1053,6 +1247,8 @@ function LuckyBlockController:KnitInit()
 	self._rarityTargets = {}
 	self._rarityColorTargets = {}
 	self._rarityStrokeColorTargets = {}
+	self._rarityGradientTargets = {}
+	self._indicatorVisibleTargets = {}
 	self._healthConns = {}
 	self._cameraShake = nil
 	self._baseFov = nil
@@ -1139,13 +1335,20 @@ function LuckyBlockController:KnitStart()
 
 		for _, block in self._blocks do
 			local scaleTarget = self._scaleTargets[block]
+			local indicatorTarget = self._indicatorVisibleTargets[block]
 			if scaleTarget then
 				if block:GetAttribute("IsBreaking") == true then
 					scaleTarget(0)
+					if indicatorTarget then
+						indicatorTarget(0)
+					end
 				else
 					local delta = block:GetPivot().Position - playerPos
 					local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
 					scaleTarget(if distSq <= BILLBOARD_RANGE_SQ then 1 else 0)
+					if indicatorTarget then
+						indicatorTarget(if distSq <= DETECTION_RANGE_SQ then 1 else 0)
+					end
 				end
 			end
 		end
