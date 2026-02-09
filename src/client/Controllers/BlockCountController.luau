@@ -47,7 +47,7 @@ function BlockCountController:SetBlockCount(count: number)
 end
 
 function BlockCountController:_syncFromAuthoritative(count: number)
-	if typeof(count) ~= "number" then
+	if typeof(count) ~= "number" or count < 0 then
 		return
 	end
 
@@ -105,9 +105,6 @@ function BlockCountController:KnitStart()
 	self._countPulseTarget = countPulseTarget
 	self._dataService = Knit.GetService("DataService")
 	self._blockCountProperty = self._dataService.BlockCount
-
-	local initialCount = self._blockCountProperty:Get()
-	self:_syncFromAuthoritative(if typeof(initialCount) == "number" then initialCount else 0)
 
 	self._blockCountProperty:Observe(function(nextCount)
 		self:_syncFromAuthoritative(nextCount)

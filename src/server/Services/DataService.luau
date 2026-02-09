@@ -16,7 +16,7 @@ local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
 local DataService = Knit.CreateService({
 	Name = "DataService",
 	Client = {
-		BlockCount = Knit.CreateProperty(0),
+		BlockCount = Knit.CreateProperty(-1),
 	},
 })
 

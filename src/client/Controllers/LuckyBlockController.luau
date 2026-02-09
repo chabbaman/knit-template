@@ -44,6 +44,10 @@ function LuckyBlockController:ConnectDebrisCollected(callback: () -> ())
 	return self._debrisCollectedEvent.Event:Connect(callback)
 end
 
+function LuckyBlockController:ConnectBlockBroken(callback: () -> ())
+	return self._blockBrokenEvent.Event:Connect(callback)
+end
+
 function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	local _, size = block:GetBoundingBox()
 	local blockPos = block:GetPivot().Position
@@ -1027,6 +1031,7 @@ function LuckyBlockController:_onInput()
 				SoundUtil.playFromSoundsFolder("BlockImpact")
 				if broke or willBreak then
 					self:_resetBlockVisualToRest(closestBlock)
+					self._blockBrokenEvent:Fire()
 				else
 					self:_animateBlock(closestBlock, hrp.Position)
 				end
@@ -1061,6 +1066,7 @@ function LuckyBlockController:KnitInit()
 	self._collectCount = 0
 	self._collectTextVersion = 0
 	self._debrisCollectedEvent = Instance.new("BindableEvent")
+	self._blockBrokenEvent = Instance.new("BindableEvent")
 end
 
 function LuckyBlockController:KnitStart()
