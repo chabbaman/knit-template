@@ -6,6 +6,10 @@ LuckyBlockRarityConstants.SPAWN_TYPE_TO_RARITY = {
 	Regular = "Common",
 }
 
+LuckyBlockRarityConstants.RARITY_HEALTH = {
+	Common = 175,
+}
+
 LuckyBlockRarityConstants.RARITY_COLORS = {
 	Common = Color3.fromRGB(255, 255, 255),
 }
@@ -49,9 +53,17 @@ function LuckyBlockRarityConstants.getRarityFromSpawnType(spawnType: string?): s
 	return LuckyBlockRarityConstants.DEFAULT
 end
 
+function LuckyBlockRarityConstants.getHealth(rarity: string?): number
+	local normalized = LuckyBlockRarityConstants.normalizeRarity(rarity)
+	return LuckyBlockRarityConstants.RARITY_HEALTH[normalized]
+		or LuckyBlockRarityConstants.RARITY_HEALTH[LuckyBlockRarityConstants.DEFAULT]
+		or 100
+end
+
 function LuckyBlockRarityConstants.getColor(rarity: string?): Color3
 	local normalized = LuckyBlockRarityConstants.normalizeRarity(rarity)
-	return LuckyBlockRarityConstants.RARITY_COLORS[normalized] or LuckyBlockRarityConstants.RARITY_COLORS[LuckyBlockRarityConstants.DEFAULT]
+	return LuckyBlockRarityConstants.RARITY_COLORS[normalized]
+		or LuckyBlockRarityConstants.RARITY_COLORS[LuckyBlockRarityConstants.DEFAULT]
 end
 
 function LuckyBlockRarityConstants.getGradient(rarity: string?): ColorSequence

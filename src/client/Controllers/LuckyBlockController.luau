@@ -30,7 +30,6 @@ local COLLECT_TEXT_FADE_CLEAR_DELAY = 0.3
 local FOV_IMPULSE_AMOUNT = 2
 local FOV_IMPULSE_HOLD = 0.05
 local LOCK_ON_TURN_RESPONSE = 14
-local DAMAGE_PER_HIT = 10
 local INDICATOR_SIZE = 5
 local INDICATOR_HEIGHT_OFFSET = 0.05
 local INDICATOR_IMAGE = "rbxassetid://4885490162"
@@ -1218,13 +1217,11 @@ function LuckyBlockController:_onInput()
 
 	if closestBlock and closestSq <= DETECTION_RANGE_SQ then
 		if self._luckyBlockService then
-			local healthBefore = closestBlock:GetAttribute("Health")
-			local willBreak = typeof(healthBefore) == "number" and healthBefore > 0 and healthBefore <= DAMAGE_PER_HIT
 			local blockPosition = closestBlock:GetPivot().Position
 			self._luckyBlockService:TryHitBlock(closestBlock):andThen(function(ok, broke, blocksAwarded)
 				if ok then
 					SoundUtil.playFromSoundsFolder("BlockImpact")
-					if broke or willBreak then
+					if broke then
 						SoundUtil.playFromSoundsFolder("BlockReward")
 						self:_spawnBreakEffect(closestBlock, blockPosition)
 						self:_spawnDebris(closestBlock, blockPosition, blocksAwarded or 1)

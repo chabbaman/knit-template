@@ -10,10 +10,8 @@ local LuckyBlockRarityConstants = require(Shared.LuckyBlockRarityConstants)
 
 local BREAK_RANGE_SQ = 8 * 8
 local HIT_COOLDOWN = 0.12
-local DEFAULT_MAX_HEALTH = 100
 local DAMAGE_PER_HIT = 10
 local DEFAULT_SPAWN_INTERVAL = 8
-local MIN_SPAWN_INTERVAL = 0.2
 local DEFAULT_SPAWN_TYPE = "Regular"
 local INITIAL_SPAWN_COUNT = 10
 local MIN_ACTIVE_BLOCKS = 10
@@ -54,12 +52,38 @@ function LuckyBlockService:KnitStart()
 		self._lastHitAt[player] = nil
 	end)
 
+	Players.PlayerAdded:Connect(function(player)
+		self:_spawnInitialBlocksForPlayer(player)
+	end)
+
+	for _, player in Players:GetPlayers() do
+		task.spawn(function()
+			self:_spawnInitialBlocksForPlayer(player)
+		end)
+	end
+
 	self._spawnThread = task.spawn(function()
 		self:_runSpawner()
 	end)
 end
 
-function LuckyBlockService:_getSpawnPartAttribute(spawnPart: BasePart, name: string, default: number, minValue: number?): number
+function LuckyBlockService:_spawnInitialBlocksForPlayer(player: Player)
+	local plot = self._plotService:GetPlayerPlot(player)
+	if not plot then
+		return
+	end
+
+	for _ = 1, INITIAL_SPAWN_COUNT do
+		self:_spawnOne(plot)
+	end
+end
+
+function LuckyBlockService:_getSpawnPartAttribute(
+	spawnPart: BasePart,
+	name: string,
+	default: number,
+	minValue: number?
+): number
 	local attr = spawnPart:GetAttribute(name)
 	if typeof(attr) == "number" then
 		if minValue and attr < minValue then
@@ -188,13 +212,23 @@ function LuckyBlockService:_spawnOne(plot: Instance)
 	end)
 end
 
-function LuckyBlockService:_pivotForScale(basePivot: CFrame, halfHeight: number, targetScale: number, baseScale: number): CFrame
+function LuckyBlockService:_pivotForScale(
+	basePivot: CFrame,
+	halfHeight: number,
+	targetScale: number,
+	baseScale: number
+): CFrame
 	local scaleFactor = targetScale / math.max(baseScale, 0.001)
 	local liftCompensation = halfHeight * (scaleFactor - 1)
 	return basePivot + basePivot.UpVector * liftCompensation
 end
 
-function LuckyBlockService:_pivotForScaleGrounded(basePivot: CFrame, halfHeight: number, targetScale: number, baseScale: number): CFrame
+function LuckyBlockService:_pivotForScaleGrounded(
+	basePivot: CFrame,
+	halfHeight: number,
+	targetScale: number,
+	baseScale: number
+): CFrame
 	local scaleFactor = targetScale / math.max(baseScale, 0.001)
 	local liftCompensation = halfHeight * (scaleFactor - 1)
 	return basePivot + Vector3.new(0, liftCompensation, 0)
@@ -351,18 +385,6 @@ function LuckyBlockService:_initializeBlock(block: Model, spawnType: string?)
 		end
 	end
 
-	local maxHealth = block:GetAttribute("MaxHealth")
-	if typeof(maxHealth) ~= "number" or maxHealth <= 0 then
-		maxHealth = DEFAULT_MAX_HEALTH
-		block:SetAttribute("MaxHealth", maxHealth)
-	end
-
-	local health = block:GetAttribute("Health")
-	if typeof(health) ~= "number" then
-		health = maxHealth
-	end
-	block:SetAttribute("Health", math.clamp(health, 0, maxHealth))
-
 	local rarity = block:GetAttribute("Rarity")
 	if typeof(rarity) ~= "string" or rarity == "" then
 		rarity = LuckyBlockRarityConstants.getRarityFromSpawnType(spawnType)
@@ -370,6 +392,10 @@ function LuckyBlockService:_initializeBlock(block: Model, spawnType: string?)
 		rarity = LuckyBlockRarityConstants.normalizeRarity(rarity)
 	end
 	block:SetAttribute("Rarity", rarity)
+
+	local maxHealth = LuckyBlockRarityConstants.getHealth(rarity)
+	block:SetAttribute("MaxHealth", maxHealth)
+	block:SetAttribute("Health", maxHealth)
 end
 
 function LuckyBlockService:_isValidBlock(block: Instance): boolean
@@ -388,6 +414,25 @@ function LuckyBlockService:_isValidBlock(block: Instance): boolean
 	end
 
 	return true
+end
+
+function LuckyBlockService:_getEquippedToolStrength(player: Player): number?
+	local character = player.Character
+	if not character then
+		return nil
+	end
+
+	local tool = character:FindFirstChildOfClass("Tool")
+	if not tool then
+		return nil
+	end
+
+	local strength = tool:GetAttribute("Strength")
+	if typeof(strength) ~= "number" or strength <= 0 then
+		return nil
+	end
+
+	return strength
 end
 
 function LuckyBlockService:_canHitBlock(player: Player, block: Model): boolean
@@ -443,17 +488,17 @@ end
 
 function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boolean, boolean, number)
 	if not self:_isValidBlock(block) then
-		return false, false
+		return false, false, 0
 	end
 
 	local typedBlock = block :: Model
 	if not self:_canHitBlock(player, typedBlock) then
-		return false, false
+		return false, false, 0
 	end
 
 	local maxHealth = typedBlock:GetAttribute("MaxHealth")
 	if typeof(maxHealth) ~= "number" or maxHealth <= 0 then
-		maxHealth = DEFAULT_MAX_HEALTH
+		maxHealth = LuckyBlockRarityConstants.getHealth(typedBlock:GetAttribute("Rarity"))
 		typedBlock:SetAttribute("MaxHealth", maxHealth)
 	end
 
@@ -464,10 +509,11 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 
 	health = math.clamp(health, 0, maxHealth)
 	if health <= 0 then
-		return false, false
+		return false, false, 0
 	end
 
-	local newHealth = math.max(0, health - DAMAGE_PER_HIT)
+	local damage = self:_getEquippedToolStrength(player) or DAMAGE_PER_HIT
+	local newHealth = math.max(0, health - damage)
 	typedBlock:SetAttribute("Health", newHealth)
 	self:_emitHitParticles(typedBlock)
 	local blocksAwarded = random:NextInteger(BLOCKS_PER_HIT_MIN, BLOCKS_PER_HIT_MAX)
