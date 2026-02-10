@@ -357,7 +357,6 @@ function LuckyBlockService:_emitHitParticles(block: Model)
 end
 
 function LuckyBlockService:_runSpawner()
-	task.wait()
 	while true do
 		local anyMissing = false
 		for plot, _ in self._plotService:GetAssignedPlots() do

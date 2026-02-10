@@ -3,6 +3,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Packages = ReplicatedStorage.Packages
 local Knit = require(Packages.Knit)
+local vide = require(Packages.Vide)
+local create = vide.create
+local root = vide.root
 
 local PlotService = Knit.CreateService({
 	Name = "PlotService",
@@ -14,6 +17,7 @@ function PlotService:KnitInit()
 	self._plotToPlayer = {}
 	self._availablePlots = {}
 	self._characterConns = {}
+	self._billboardRoots = {}
 end
 
 function PlotService:KnitStart()
@@ -57,6 +61,84 @@ function PlotService:_teleportToPlot(player: Player, character: Model)
 	end)
 end
 
+function PlotService:_createPlotBillboard(player: Player, plot: Instance)
+	local adornee = plot:FindFirstChild("SpawnPart") or plot:FindFirstChildWhichIsA("BasePart")
+	if not adornee then
+		return
+	end
+
+	local headshotUrl = Players:GetUserThumbnailAsync(
+		player.UserId,
+		Enum.ThumbnailType.HeadShot,
+		Enum.ThumbnailSize.Size100x100
+	)
+
+	local destroy = root(function()
+		create("BillboardGui")({
+			Name = "PlotBillboard",
+			Adornee = adornee,
+			Size = UDim2.fromOffset(200, 120),
+			StudsOffset = Vector3.new(0, 28, 0),
+			AlwaysOnTop = true,
+			ResetOnSpawn = false,
+			Parent = adornee,
+
+			create("UIListLayout")({
+				FillDirection = Enum.FillDirection.Vertical,
+				HorizontalAlignment = Enum.HorizontalAlignment.Center,
+				VerticalAlignment = Enum.VerticalAlignment.Bottom,
+				Padding = UDim.new(0, 4),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			}),
+
+			create("ImageLabel")({
+				Name = "Headshot",
+				BackgroundTransparency = 1,
+				Image = headshotUrl,
+				LayoutOrder = 1,
+				Size = UDim2.fromOffset(64, 64),
+
+				create("UICorner")({
+					CornerRadius = UDim.new(1, 0),
+				}),
+			}),
+
+			create("TextLabel")({
+				Name = "OwnerName",
+				BackgroundTransparency = 1,
+				LayoutOrder = 2,
+				Size = UDim2.fromOffset(200, 40),
+				FontFace = Font.new(
+					"rbxasset://fonts/families/FredokaOne.json",
+					Enum.FontWeight.Heavy,
+					Enum.FontStyle.Normal
+				),
+				Text = player.DisplayName .. "'s Farm",
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				TextScaled = true,
+
+				create("UIStroke")({
+					Color = Color3.fromRGB(0, 0, 0),
+					LineJoinMode = Enum.LineJoinMode.Round,
+					StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+					Thickness = 0.08,
+					Transparency = 0.2,
+				}),
+			}),
+		})
+	end)
+
+	self._billboardRoots[player] = destroy
+end
+
+function PlotService:_removePlotBillboard(player: Player)
+	local destroy = self._billboardRoots[player]
+	if destroy then
+		destroy()
+		self._billboardRoots[player] = nil
+	end
+end
+
 function PlotService:_assignPlot(player: Player)
 	if self._playerToPlot[player] then
 		return
@@ -69,6 +151,8 @@ function PlotService:_assignPlot(player: Player)
 	local plot = table.remove(self._availablePlots, 1)
 	self._playerToPlot[player] = plot
 	self._plotToPlayer[plot] = player
+
+	self:_createPlotBillboard(player, plot)
 
 	self._characterConns[player] = player.CharacterAdded:Connect(function(character)
 		self:_teleportToPlot(player, character)
@@ -84,6 +168,8 @@ function PlotService:_freePlot(player: Player)
 	if not plot then
 		return
 	end
+
+	self:_removePlotBillboard(player)
 
 	if self._characterConns[player] then
 		self._characterConns[player]:Disconnect()
