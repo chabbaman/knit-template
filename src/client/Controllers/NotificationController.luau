@@ -20,14 +20,14 @@ local NotificationController = Knit.CreateController({
 	Name = "NotificationController",
 })
 
-function NotificationController:Show(text: string, rarity: string?)
+function NotificationController:Show(text: string, rarity: string?, gradientOverride: ColorSequence?, strokeColorOverride: Color3?)
 	local container = self._container
 	if not container then
 		return
 	end
 
-	local gradient = LuckyBlockRarityConstants.getGradient(rarity)
-	local strokeColor = LuckyBlockRarityConstants.getStrokeColor(rarity)
+	local gradient = gradientOverride or LuckyBlockRarityConstants.getGradient(rarity)
+	local strokeColor = strokeColorOverride or LuckyBlockRarityConstants.getStrokeColor(rarity)
 
 	local scaleTarget = source(0)
 

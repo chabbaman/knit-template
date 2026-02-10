@@ -83,10 +83,13 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	self._rarityGradientTargets[block] = rarityGradientTarget
 	local indicatorVisibleTarget = source(0)
 	self._indicatorVisibleTargets[block] = indicatorVisibleTarget
+	local trailHealthFractionTarget = source(1)
+	self._trailHealthFractionTargets[block] = trailHealthFractionTarget
 
 	local destroy = root(function()
 		local animatedScale = spring(scaleTarget, 0.3, 0.6)
 		local animatedHealthFraction = spring(healthFractionTarget, 0.14, 1.05)
+		local animatedTrailHealthFraction = spring(trailHealthFractionTarget, 0.3, 1.5)
 		local animatedProgressPulse = spring(progressPulseTarget, 0.12, 1)
 
 		create("BillboardGui")({
@@ -332,6 +335,51 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 					}),
 
 					create("Frame")({
+						Name = "TrailFillMask",
+						BackgroundTransparency = 1,
+						ClipsDescendants = true,
+						Position = UDim2.fromScale(0.01, 0.08),
+						Size = function()
+							return UDim2.fromScale(math.clamp(animatedTrailHealthFraction(), 0, 1) * 0.98, 0.84)
+						end,
+						ZIndex = 1,
+
+						create("UICorner")({
+							Name = "UICorner",
+							CornerRadius = UDim.new(0.5, 0),
+						}),
+
+						create("ImageLabel")({
+							Name = "TrailFill",
+							BackgroundTransparency = 0,
+							Image = "rbxassetid://6927295847",
+							ImageColor3 = Color3.fromRGB(255, 255, 255),
+							ImageTransparency = 0.66,
+							ResampleMode = Enum.ResamplerMode.Pixelated,
+							ScaleType = Enum.ScaleType.Tile,
+							Size = function()
+								local fraction = math.clamp(animatedTrailHealthFraction(), 0.001, 1)
+								return UDim2.fromScale(1 / fraction, 1)
+							end,
+							TileSize = UDim2.fromScale(0.08, 0.8),
+
+							create("UICorner")({
+								Name = "UICorner",
+								CornerRadius = UDim.new(0.5, 0),
+							}),
+
+							create("UIGradient")({
+								Name = "UIGradient",
+								Color = ColorSequence.new({
+									ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 90, 45)),
+									ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 55, 25)),
+								}),
+								Rotation = -90,
+							}),
+						}),
+					}),
+
+					create("Frame")({
 						Name = "FillMask",
 						BackgroundTransparency = 1,
 						ClipsDescendants = true,
@@ -339,6 +387,7 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						Size = function()
 							return UDim2.fromScale(math.clamp(animatedHealthFraction(), 0, 1) * 0.98, 0.84)
 						end,
+						ZIndex = 2,
 
 						create("UICorner")({
 							Name = "UICorner",
@@ -662,7 +711,20 @@ function LuckyBlockController:_updateHealthForBlock(block: Model)
 		health = maxHealth
 	end
 
-	target(math.clamp(health / maxHealth, 0, 1))
+	local fraction = math.clamp(health / maxHealth, 0, 1)
+	target(fraction)
+
+	local trailTarget = self._trailHealthFractionTargets[block]
+	if trailTarget then
+		local version = (self._trailVersions[block] or 0) + 1
+		self._trailVersions[block] = version
+		task.delay(0.15, function()
+			if self._trailVersions[block] ~= version then
+				return
+			end
+			trailTarget(fraction)
+		end)
+	end
 end
 
 function LuckyBlockController:_updateTimeLeftForBlock(block: Model)
@@ -752,6 +814,8 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 	self._rarityStrokeColorTargets[block] = nil
 	self._rarityGradientTargets[block] = nil
 	self._indicatorVisibleTargets[block] = nil
+	self._trailHealthFractionTargets[block] = nil
+	self._trailVersions[block] = nil
 	if self._pendingConn and self._pendingConn[block] then
 		self._pendingConn[block]:Disconnect()
 		self._pendingConn[block] = nil
@@ -761,6 +825,13 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 			conn:Disconnect()
 		end
 		self._healthConns[block] = nil
+	end
+	if self._highlightedBlock == block then
+		if self._highlight then
+			self._highlight:Destroy()
+			self._highlight = nil
+		end
+		self._highlightedBlock = nil
 	end
 end
 
@@ -1217,6 +1288,23 @@ function LuckyBlockController:_onInput()
 
 	if closestBlock and closestSq <= DETECTION_RANGE_SQ then
 		if self._luckyBlockService then
+			local character = Players.LocalPlayer.Character
+			if character then
+				local tool = character:FindFirstChildOfClass("Tool")
+				if not tool or typeof(tool:GetAttribute("Strength")) ~= "number" or tool:GetAttribute("Strength") <= 0 then
+					self._notificationController:Show(
+						"Equip a Pickaxe!",
+						nil,
+						ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 30, 30)),
+						}),
+						Color3.fromRGB(100, 0, 0)
+					)
+					return
+				end
+			end
+
 			local blockPosition = closestBlock:GetPivot().Position
 			self._luckyBlockService:TryHitBlock(closestBlock):andThen(function(ok, broke, blocksAwarded)
 				if ok then
@@ -1272,6 +1360,8 @@ function LuckyBlockController:KnitInit()
 	self._rarityStrokeColorTargets = {}
 	self._rarityGradientTargets = {}
 	self._indicatorVisibleTargets = {}
+	self._trailHealthFractionTargets = {}
+	self._trailVersions = {}
 	self._healthConns = {}
 	self._watchedContainers = {}
 	self._cameraShake = nil
@@ -1285,12 +1375,15 @@ function LuckyBlockController:KnitInit()
 	self._collectFaceTarget = nil
 	self._collectCount = 0
 	self._collectTextVersion = 0
+	self._highlightedBlock = nil
+	self._highlight = nil
 	self._debrisCollectedEvent = Instance.new("BindableEvent")
 	self._blockBrokenEvent = Instance.new("BindableEvent")
 end
 
 function LuckyBlockController:KnitStart()
 	self._cameraShake = Knit.GetController("CameraShakeController")
+	self._notificationController = Knit.GetController("NotificationController")
 	self._luckyBlockService = Knit.GetService("LuckyBlockService")
 	local camera = workspace.CurrentCamera
 	if camera then
@@ -1389,6 +1482,26 @@ function LuckyBlockController:KnitStart()
 				if blendedDir.Magnitude > 0.001 then
 					hrp.CFrame = CFrame.lookAt(playerPos, playerPos + blendedDir.Unit)
 				end
+			end
+		end
+
+		-- Highlight the closest breakable block
+		local targetBlock = if closestBlock and closestSq <= DETECTION_RANGE_SQ then closestBlock else nil
+		if targetBlock ~= self._highlightedBlock then
+			if self._highlight then
+				self._highlight:Destroy()
+				self._highlight = nil
+			end
+			self._highlightedBlock = targetBlock
+			if targetBlock then
+				local highlight = Instance.new("Highlight")
+				highlight.FillColor = Color3.new(1, 1, 1)
+				highlight.FillTransparency = 0.75
+				highlight.OutlineColor = Color3.new(1, 1, 1)
+				highlight.OutlineTransparency = 0
+				highlight.Adornee = targetBlock
+				highlight.Parent = targetBlock
+				self._highlight = highlight
 			end
 		end
 	end)

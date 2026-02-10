@@ -511,7 +511,10 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 		return false, false, 0
 	end
 
-	local damage = self:_getEquippedToolStrength(player) or DAMAGE_PER_HIT
+	local damage = self:_getEquippedToolStrength(player)
+	if not damage then
+		return false, false, 0
+	end
 	local newHealth = math.max(0, health - damage)
 	typedBlock:SetAttribute("Health", newHealth)
 	self:_emitHitParticles(typedBlock)
