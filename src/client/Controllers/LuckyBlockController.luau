@@ -32,7 +32,7 @@ local FOV_IMPULSE_HOLD = 0.05
 local LOCK_ON_TURN_RESPONSE = 14
 local DAMAGE_PER_HIT = 10
 local INDICATOR_SIZE = 5
-local INDICATOR_HEIGHT_OFFSET = 0.15
+local INDICATOR_HEIGHT_OFFSET = 0.05
 local INDICATOR_IMAGE = "rbxassetid://4885490162"
 local BREAK_PIECE_COUNT = 16
 local BREAK_PIECE_LIFETIME = 2
@@ -785,9 +785,8 @@ function LuckyBlockController:_getClosestBlock(characterPosition: Vector3): (Mod
 end
 
 function LuckyBlockController:_cacheBlocks()
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	if not container then
-		-- Clean up any existing UIs
+	local plotsFolder = workspace:FindFirstChild("Plots")
+	if not plotsFolder then
 		for _, block in self._blocks do
 			self:_cleanupBlock(block)
 		end
@@ -796,24 +795,21 @@ function LuckyBlockController:_cacheBlocks()
 	end
 
 	local blocks = {}
-	local children = container:GetChildren()
-
-	-- Track which blocks are still present
 	local current = {}
-	for i = 1, #children do
-		local child = children[i]
-		if child:IsA("Model") then
-			blocks[#blocks + 1] = child
-			current[child] = true
 
-			-- Set up UI for new blocks
-			if not self._uiRoots[child] and not (self._pendingConn and self._pendingConn[child]) then
-				self:_setupBlock(child)
+	for _, plot in plotsFolder:GetChildren() do
+		for _, child in plot:GetChildren() do
+			if child:IsA("Model") then
+				blocks[#blocks + 1] = child
+				current[child] = true
+
+				if not self._uiRoots[child] and not (self._pendingConn and self._pendingConn[child]) then
+					self:_setupBlock(child)
+				end
 			end
 		end
 	end
 
-	-- Clean up removed blocks
 	for _, block in self._blocks do
 		if not current[block] then
 			self:_cleanupBlock(block)
@@ -850,11 +846,21 @@ function LuckyBlockController:_pivotForScale(originals, scaleFactor: number, nud
 end
 
 function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3, count: number)
+	local blockColors = {}
+	for _, descendant in block:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(blockColors, descendant.Color)
+		end
+	end
+
 	for i = 1, count do
 		task.delay((i - 1) * DEBRIS_STAGGER_TIME, function()
 			local debris = DEBRIS_TEMPLATE:Clone()
 			debris.Anchored = true
 			debris.CanCollide = false
+			if #blockColors > 0 then
+				debris.Color = blockColors[random:NextInteger(1, #blockColors)]
+			end
 			debris.CFrame = CFrame.new(blockPosition)
 			debris.Parent = workspace
 
@@ -1223,7 +1229,7 @@ function LuckyBlockController:_onInput()
 						self:_spawnBreakEffect(closestBlock, blockPosition)
 						self:_spawnDebris(closestBlock, blockPosition, blocksAwarded or 1)
 						self:_resetBlockVisualToRest(closestBlock)
-						self._blockBrokenEvent:Fire()
+						self._blockBrokenEvent:Fire(closestBlock.Name, LuckyBlockRarityConstants.normalizeRarity(closestBlock:GetAttribute("Rarity")))
 					else
 						self:_spawnHitEffect(closestBlock, blockPosition)
 						self:_animateBlock(closestBlock, hrp.Position, blocksAwarded or 1)
@@ -1232,6 +1238,26 @@ function LuckyBlockController:_onInput()
 			end)
 		end
 	end
+end
+
+function LuckyBlockController:_watchPlot(plot: Instance)
+	if self._watchedContainers[plot] then
+		return
+	end
+
+	local conn1 = plot.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			self:_cacheBlocks()
+		end
+	end)
+
+	local conn2 = plot.ChildRemoved:Connect(function(child)
+		if child:IsA("Model") then
+			self:_cacheBlocks()
+		end
+	end)
+
+	self._watchedContainers[plot] = { conn1, conn2 }
 end
 
 function LuckyBlockController:KnitInit()
@@ -1250,6 +1276,7 @@ function LuckyBlockController:KnitInit()
 	self._rarityGradientTargets = {}
 	self._indicatorVisibleTargets = {}
 	self._healthConns = {}
+	self._watchedContainers = {}
 	self._cameraShake = nil
 	self._baseFov = nil
 	self._fovImpulseVersion = 0
@@ -1291,18 +1318,13 @@ function LuckyBlockController:KnitStart()
 		self._hrp = nil
 	end)
 
-	-- Cache blocks and listen for changes
 	self:_cacheBlocks()
 
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	if container then
-		container.ChildAdded:Connect(function()
-			self:_cacheBlocks()
-		end)
-
-		container.ChildRemoved:Connect(function()
-			self:_cacheBlocks()
-		end)
+	local plotsFolder = workspace:FindFirstChild("Plots")
+	if plotsFolder then
+		for _, plot in plotsFolder:GetChildren() do
+			self:_watchPlot(plot)
+		end
 	end
 
 	-- Update billboard visibility based on proximity + face nearest block when in range

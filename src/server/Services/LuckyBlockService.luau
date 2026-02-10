@@ -41,20 +41,14 @@ local LuckyBlockService = Knit.CreateService({
 
 function LuckyBlockService:KnitInit()
 	self._lastHitAt = {}
-	self._boundContainer = nil
-	self._containerConn = nil
 	self._spawnThread = nil
 	self._dataService = nil
+	self._plotService = nil
 end
 
 function LuckyBlockService:KnitStart()
 	self._dataService = Knit.GetService("DataService")
-	self:_bindLuckyBlockContainer()
-	workspace.ChildAdded:Connect(function(child)
-		if child:IsA("Folder") and child.Name == "Lucky Blocks" then
-			self:_bindLuckyBlockContainer()
-		end
-	end)
+	self._plotService = Knit.GetService("PlotService")
 
 	Players.PlayerRemoving:Connect(function(player)
 		self._lastHitAt[player] = nil
@@ -65,64 +59,22 @@ function LuckyBlockService:KnitStart()
 	end)
 end
 
-function LuckyBlockService:_getSpawnInterval(): number
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if spawnPart and spawnPart:IsA("BasePart") then
-		local attr = spawnPart:GetAttribute("SpawnInterval")
-		if typeof(attr) == "number" and attr >= MIN_SPAWN_INTERVAL then
+function LuckyBlockService:_getSpawnPartAttribute(spawnPart: BasePart, name: string, default: number, minValue: number?): number
+	local attr = spawnPart:GetAttribute(name)
+	if typeof(attr) == "number" then
+		if minValue and attr < minValue then
+			return default
+		end
+		if attr > 0 or (minValue and minValue <= 0) then
 			return attr
 		end
 	end
-	return DEFAULT_SPAWN_INTERVAL
+	return default
 end
 
-function LuckyBlockService:_getDespawnAfter(): number
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if spawnPart and spawnPart:IsA("BasePart") then
-		local attr = spawnPart:GetAttribute("DespawnAfter")
-		if typeof(attr) == "number" and attr > 0 then
-			return attr
-		end
-	end
-	return DEFAULT_DESPAWN_AFTER
-end
-
-function LuckyBlockService:_getDespawnJitter(): number
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if spawnPart and spawnPart:IsA("BasePart") then
-		local attr = spawnPart:GetAttribute("DespawnJitter")
-		if typeof(attr) == "number" and attr >= 0 then
-			return attr
-		end
-	end
-	return DEFAULT_DESPAWN_JITTER
-end
-
-function LuckyBlockService:_getMinimumActiveBlocks(): number
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if spawnPart and spawnPart:IsA("BasePart") then
-		local attr = spawnPart:GetAttribute("MinActiveBlocks")
-		if typeof(attr) == "number" and attr >= 0 then
-			return math.floor(attr)
-		end
-	end
-	return MIN_ACTIVE_BLOCKS
-end
-
-function LuckyBlockService:_getSpawnPadding(): number
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if spawnPart and spawnPart:IsA("BasePart") then
-		local attr = spawnPart:GetAttribute("SpawnPadding")
-		if typeof(attr) == "number" and attr >= 0 then
-			return attr
-		end
-	end
-	return DEFAULT_SPAWN_PADDING
-end
-
-function LuckyBlockService:_getActiveBlockCount(container: Folder): number
+function LuckyBlockService:_getActiveBlockCount(plot: Instance): number
 	local count = 0
-	for _, child in container:GetChildren() do
+	for _, child in plot:GetChildren() do
 		if child:IsA("Model") then
 			count += 1
 		end
@@ -130,8 +82,8 @@ function LuckyBlockService:_getActiveBlockCount(container: Folder): number
 	return count
 end
 
-function LuckyBlockService:_canSpawnAtPosition(container: Folder, position: Vector3, paddingSq: number): boolean
-	for _, child in container:GetChildren() do
+function LuckyBlockService:_canSpawnAtPosition(plot: Instance, position: Vector3, paddingSq: number): boolean
+	for _, child in plot:GetChildren() do
 		if child:IsA("Model") then
 			local existing = child:GetPivot().Position
 			local dx = existing.X - position.X
@@ -169,12 +121,8 @@ function LuckyBlockService:_getTemplateFromSpawnType(spawnType: string): Model?
 	return nil
 end
 
-function LuckyBlockService:_spawnOne()
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	local spawnPart = workspace:FindFirstChild("SpawnPart")
-	if not container or not container:IsA("Folder") then
-		return
-	end
+function LuckyBlockService:_spawnOne(plot: Instance)
+	local spawnPart = plot:FindFirstChild("SpawnPart")
 	if not spawnPart or not spawnPart:IsA("BasePart") then
 		return
 	end
@@ -191,13 +139,13 @@ function LuckyBlockService:_spawnOne()
 	end
 
 	local block = template:Clone()
-	block.Parent = container
+	block.Parent = plot
 
 	local currentPivot = block:GetPivot()
 	local currentRotation = currentPivot - currentPivot.Position
 	local _, size = block:GetBoundingBox()
 	local y = spawnPart.Size.Y * 0.5 + size.Y * 0.5 + SPAWN_CLEARANCE
-	local spawnPadding = self:_getSpawnPadding()
+	local spawnPadding = self:_getSpawnPartAttribute(spawnPart, "SpawnPadding", DEFAULT_SPAWN_PADDING, 0)
 	local spawnPaddingSq = spawnPadding * spawnPadding
 
 	local spawnPosition = nil
@@ -205,7 +153,7 @@ function LuckyBlockService:_spawnOne()
 		local x = random:NextNumber(-spawnPart.Size.X * 0.5, spawnPart.Size.X * 0.5)
 		local z = random:NextNumber(-spawnPart.Size.Z * 0.5, spawnPart.Size.Z * 0.5)
 		local candidate = (spawnPart.CFrame * CFrame.new(x, y, z)).Position
-		if self:_canSpawnAtPosition(container, candidate, spawnPaddingSq) then
+		if self:_canSpawnAtPosition(plot, candidate, spawnPaddingSq) then
 			spawnPosition = candidate
 			break
 		end
@@ -219,8 +167,8 @@ function LuckyBlockService:_spawnOne()
 	local spawnCFrame = CFrame.new(spawnPosition) * currentRotation
 	block:PivotTo(spawnCFrame)
 	local now = workspace:GetServerTimeNow()
-	local despawnAfter = self:_getDespawnAfter()
-	local despawnJitter = self:_getDespawnJitter()
+	local despawnAfter = self:_getSpawnPartAttribute(spawnPart, "DespawnAfter", DEFAULT_DESPAWN_AFTER, 0)
+	local despawnJitter = self:_getSpawnPartAttribute(spawnPart, "DespawnJitter", DEFAULT_DESPAWN_JITTER, 0)
 	if despawnJitter > 0 then
 		despawnAfter += random:NextNumber(-despawnJitter, despawnJitter)
 		despawnAfter = math.max(1, despawnAfter)
@@ -375,56 +323,23 @@ function LuckyBlockService:_emitHitParticles(block: Model)
 end
 
 function LuckyBlockService:_runSpawner()
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	local initialMissing = INITIAL_SPAWN_COUNT
-	if container and container:IsA("Folder") then
-		initialMissing = math.max(0, INITIAL_SPAWN_COUNT - self:_getActiveBlockCount(container))
-	end
-
-	for _ = 1, initialMissing do
-		self:_spawnOne()
-	end
-
+	task.wait()
 	while true do
-		task.wait(self:_getSpawnInterval())
-		container = workspace:FindFirstChild("Lucky Blocks")
-		if container and container:IsA("Folder") then
-			local minActive = self:_getMinimumActiveBlocks()
-			local activeCount = self:_getActiveBlockCount(container)
-			local missing = math.max(0, minActive - activeCount)
-			for _ = 1, missing do
-				self:_spawnOne()
+		local anyMissing = false
+		for plot, _ in self._plotService:GetAssignedPlots() do
+			local spawnPart = plot:FindFirstChild("SpawnPart")
+			if spawnPart and spawnPart:IsA("BasePart") then
+				local minActive = self:_getSpawnPartAttribute(spawnPart, "MinActiveBlocks", MIN_ACTIVE_BLOCKS, 0)
+				minActive = math.floor(minActive)
+				local activeCount = self:_getActiveBlockCount(plot)
+				if activeCount < minActive then
+					self:_spawnOne(plot)
+					anyMissing = true
+				end
 			end
 		end
+		task.wait(if anyMissing then DEFAULT_SPAWN_INTERVAL else 1)
 	end
-end
-
-function LuckyBlockService:_bindLuckyBlockContainer()
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	if not container then
-		return
-	end
-	if self._boundContainer == container then
-		return
-	end
-
-	if self._containerConn then
-		self._containerConn:Disconnect()
-		self._containerConn = nil
-	end
-	self._boundContainer = container
-
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") then
-			self:_initializeBlock(child)
-		end
-	end
-
-	self._containerConn = container.ChildAdded:Connect(function(child)
-		if child:IsA("Model") then
-			self:_initializeBlock(child)
-		end
-	end)
 end
 
 function LuckyBlockService:_initializeBlock(block: Model, spawnType: string?)
@@ -462,12 +377,9 @@ function LuckyBlockService:_isValidBlock(block: Instance): boolean
 		return false
 	end
 
-	local container = workspace:FindFirstChild("Lucky Blocks")
-	if not container then
-		return false
-	end
-
-	if block.Parent ~= container then
+	local plot = block.Parent
+	local plotsFolder = workspace:FindFirstChild("Plots")
+	if not plot or not plotsFolder or plot.Parent ~= plotsFolder then
 		return false
 	end
 
@@ -497,6 +409,15 @@ function LuckyBlockService:_canHitBlock(player: Player, block: Model): boolean
 	local delta = primaryPart.Position - hrp.Position
 	local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
 	if distSq > BREAK_RANGE_SQ then
+		return false
+	end
+
+	local plot = self._plotService:GetPlayerPlot(player)
+	if not plot then
+		return false
+	end
+
+	if block.Parent ~= plot then
 		return false
 	end
 

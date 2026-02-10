@@ -2,8 +2,10 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Packages = ReplicatedStorage.Packages
+local Shared = ReplicatedStorage.Shared
 local Knit = require(Packages.Knit)
 local vide = require(Packages.Vide)
+local LuckyBlockRarityConstants = require(Shared.LuckyBlockRarityConstants)
 local create = vide.create
 local source = vide.source
 local spring = vide.spring
@@ -18,11 +20,14 @@ local NotificationController = Knit.CreateController({
 	Name = "NotificationController",
 })
 
-function NotificationController:Show(text: string)
+function NotificationController:Show(text: string, rarity: string?)
 	local container = self._container
 	if not container then
 		return
 	end
+
+	local gradient = LuckyBlockRarityConstants.getGradient(rarity)
+	local strokeColor = LuckyBlockRarityConstants.getStrokeColor(rarity)
 
 	local scaleTarget = source(0)
 
@@ -57,8 +62,13 @@ function NotificationController:Show(text: string)
 					return 1 - math.clamp(animatedScale(), 0, 1)
 				end,
 
+				create("UIGradient")({
+					Color = gradient,
+					Rotation = -90,
+				}),
+
 				create("UIStroke")({
-					Color = Color3.fromRGB(0, 0, 0),
+					Color = strokeColor,
 					LineJoinMode = Enum.LineJoinMode.Round,
 					StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
 					Thickness = 0.06,
@@ -120,8 +130,8 @@ function NotificationController:KnitStart()
 	self._container = containerFrame
 
 	local luckyBlockController = Knit.GetController("LuckyBlockController")
-	luckyBlockController:ConnectBlockBroken(function()
-		self:Show("Lucky Block Destroyed!")
+	luckyBlockController:ConnectBlockBroken(function(blockName, rarity)
+		self:Show(blockName .. " Destroyed!", rarity)
 	end)
 end
 
