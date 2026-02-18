@@ -217,8 +217,8 @@ function LevelController:KnitStart()
 							create("UIGradient")({
 								Name = "UIGradient",
 								Color = ColorSequence.new({
-									ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 90, 45)),
-									ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 55, 25)),
+									ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 85, 160)),
+									ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 50, 105)),
 								}),
 								Rotation = -90,
 							}),
@@ -267,8 +267,8 @@ function LevelController:KnitStart()
 							create("UIGradient")({
 								Name = "UIGradient",
 								Color = ColorSequence.new({
-									ColorSequenceKeypoint.new(0, Color3.fromRGB(57, 150, 78)),
-									ColorSequenceKeypoint.new(1, Color3.fromRGB(33, 104, 51)),
+									ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 165, 255)),
+									ColorSequenceKeypoint.new(1, Color3.fromRGB(38, 105, 200)),
 								}),
 								Rotation = -90,
 							}),
