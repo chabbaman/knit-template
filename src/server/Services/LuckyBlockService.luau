@@ -29,6 +29,7 @@ local DEFAULT_HIT_PARTICLE_EMIT_COUNT = 16
 local DETACHED_PARTICLE_CLEANUP_PADDING = 0.4
 local BLOCKS_PER_HIT_MIN = 1
 local BLOCKS_PER_HIT_MAX = 3
+local XP_PER_HIT = 10
 
 local random = Random.new()
 
@@ -521,6 +522,7 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 	local blocksAwarded = random:NextInteger(BLOCKS_PER_HIT_MIN, BLOCKS_PER_HIT_MAX)
 	if self._dataService then
 		self._dataService:AddBlocks(player, blocksAwarded)
+		self._dataService:AddXP(player, XP_PER_HIT)
 	end
 	local broke = newHealth <= 0
 	if broke then
