@@ -13,6 +13,8 @@ local spring = vide.spring
 
 local BAR_PULSE_SCALE = 1.04
 local BAR_PULSE_RETURN_DELAY = 0.07
+local TILE_SIZE_X = 0.075
+local TILE_SIZE_Y = 1.6
 
 local LevelController = Knit.CreateController({
 	Name = "LevelController",
@@ -207,7 +209,7 @@ function LevelController:KnitStart()
 								local fraction = math.clamp((animatedXP() / math.max(requiredXP, 1)) * 0.96, 0.001, 1)
 								return UDim2.fromScale(1 / fraction, 1)
 							end,
-							TileSize = UDim2.fromScale(0.04, 0.8),
+							TileSize = UDim2.fromScale(TILE_SIZE_X, TILE_SIZE_Y),
 
 							create("UICorner")({
 								Name = "UICorner",
@@ -257,7 +259,7 @@ function LevelController:KnitStart()
 								local fraction = math.clamp(animatedXP() / math.max(requiredXP, 1), 0.001, 1)
 								return UDim2.fromScale(1 / fraction, 1)
 							end,
-							TileSize = UDim2.fromScale(0.04, 0.8),
+							TileSize = UDim2.fromScale(TILE_SIZE_X, TILE_SIZE_Y),
 
 							create("UICorner")({
 								Name = "UICorner",
