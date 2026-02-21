@@ -24,4 +24,24 @@ function SoundUtil.playFromSoundsFolder(soundName: string): Sound?
 	return soundClone
 end
 
+function SoundUtil.playDirectFromSoundsFolder(soundName: string, restartIfPlaying: boolean?): Sound?
+	local soundsFolder = SoundService:FindFirstChild("Sounds")
+	if not soundsFolder then
+		return nil
+	end
+
+	local sound = soundsFolder:FindFirstChild(soundName)
+	if not sound or not sound:IsA("Sound") then
+		return nil
+	end
+
+	if restartIfPlaying ~= false then
+		sound:Stop()
+		sound.TimePosition = 0
+	end
+	sound:Play()
+
+	return sound
+end
+
 return table.freeze(SoundUtil)

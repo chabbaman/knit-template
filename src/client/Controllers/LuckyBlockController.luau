@@ -41,6 +41,16 @@ local HIT_PIECE_COUNT = 3
 local HIT_PIECE_LIFETIME = 1.2
 local HIT_PIECE_MIN_SIZE = 0.35
 local HIT_PIECE_MAX_SIZE = 0.7
+local BRAINROT_REVEAL_HEIGHT_OFFSET = 0.05
+local BRAINROT_REVEAL_START_SCALE = 0.08
+local BRAINROT_REVEAL_PEAK_SCALE = 1.02
+local BRAINROT_REVEAL_LOW_SCALE = 0.92
+local BRAINROT_REVEAL_TOTAL_CYCLES_MIN = 13
+local BRAINROT_REVEAL_TOTAL_CYCLES_MAX = 19
+local BRAINROT_REVEAL_START_DELAY = 0.06
+local BRAINROT_REVEAL_END_DELAY = 0.32
+local BRAINROT_REVEAL_FINAL_HOLD = 1.5
+local BRAINROT_REVEAL_TRANSITION_OVERLAP = 0.09
 
 local random = Random.new()
 
@@ -500,7 +510,12 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 		})
 	end)
 
-	self._uiRoots[block] = { destroy = destroy, attachment = attachment, indicatorPart = indicatorPart, indicatorDestroy = indicatorDestroy }
+	self._uiRoots[block] = {
+		destroy = destroy,
+		attachment = attachment,
+		indicatorPart = indicatorPart,
+		indicatorDestroy = indicatorDestroy,
+	}
 	self:_updateHealthForBlock(block)
 	self:_updateTimeLeftForBlock(block)
 	self:_updateRarityForBlock(block)
@@ -751,7 +766,7 @@ function LuckyBlockController:_updateRarityForBlock(block: Model)
 		return
 	end
 
-	local rarity = LuckyBlockRarityConstants.normalizeRarity(block:GetAttribute("Rarity"))
+	local rarity = LuckyBlockRarityConstants.normalizeRarity(block:GetAttribute("Rarity") :: string?)
 	rarityTarget(rarity)
 	rarityColorTarget(LuckyBlockRarityConstants.getColor(rarity))
 	rarityStrokeColorTarget(LuckyBlockRarityConstants.getStrokeColor(rarity))
@@ -1164,11 +1179,7 @@ function LuckyBlockController:_spawnBreakEffect(block: Model, blockPosition: Vec
 		piece.CanTouch = false
 		piece.Transparency = 0
 
-		local offset = Vector3.new(
-			random:NextNumber(-1, 1),
-			random:NextNumber(0, 0.5),
-			random:NextNumber(-1, 1)
-		)
+		local offset = Vector3.new(random:NextNumber(-1, 1), random:NextNumber(0, 0.5), random:NextNumber(-1, 1))
 		piece.CFrame = CFrame.new(blockPosition + offset)
 			* CFrame.Angles(
 				random:NextNumber(0, math.pi * 2),
@@ -1180,16 +1191,9 @@ function LuckyBlockController:_spawnBreakEffect(block: Model, blockPosition: Vec
 		local angle = random:NextNumber(0, math.pi * 2)
 		local hSpeed = random:NextNumber(12, 30)
 		local vSpeed = random:NextNumber(35, 60)
-		piece.AssemblyLinearVelocity = Vector3.new(
-			math.cos(angle) * hSpeed,
-			vSpeed,
-			math.sin(angle) * hSpeed
-		)
-		piece.AssemblyAngularVelocity = Vector3.new(
-			random:NextNumber(-10, 10),
-			random:NextNumber(-10, 10),
-			random:NextNumber(-10, 10)
-		)
+		piece.AssemblyLinearVelocity = Vector3.new(math.cos(angle) * hSpeed, vSpeed, math.sin(angle) * hSpeed)
+		piece.AssemblyAngularVelocity =
+			Vector3.new(random:NextNumber(-10, 10), random:NextNumber(-10, 10), random:NextNumber(-10, 10))
 
 		task.delay(BREAK_PIECE_LIFETIME, function()
 			if piece.Parent then
@@ -1224,11 +1228,8 @@ function LuckyBlockController:_spawnHitEffect(block: Model, blockPosition: Vecto
 		piece.CanTouch = false
 		piece.Transparency = 0
 
-		local offset = Vector3.new(
-			random:NextNumber(-0.5, 0.5),
-			random:NextNumber(0, 0.3),
-			random:NextNumber(-0.5, 0.5)
-		)
+		local offset =
+			Vector3.new(random:NextNumber(-0.5, 0.5), random:NextNumber(0, 0.3), random:NextNumber(-0.5, 0.5))
 		piece.CFrame = CFrame.new(blockPosition + offset)
 			* CFrame.Angles(
 				random:NextNumber(0, math.pi * 2),
@@ -1240,16 +1241,9 @@ function LuckyBlockController:_spawnHitEffect(block: Model, blockPosition: Vecto
 		local angle = random:NextNumber(0, math.pi * 2)
 		local hSpeed = random:NextNumber(8, 18)
 		local vSpeed = random:NextNumber(25, 40)
-		piece.AssemblyLinearVelocity = Vector3.new(
-			math.cos(angle) * hSpeed,
-			vSpeed,
-			math.sin(angle) * hSpeed
-		)
-		piece.AssemblyAngularVelocity = Vector3.new(
-			random:NextNumber(-6, 6),
-			random:NextNumber(-6, 6),
-			random:NextNumber(-6, 6)
-		)
+		piece.AssemblyLinearVelocity = Vector3.new(math.cos(angle) * hSpeed, vSpeed, math.sin(angle) * hSpeed)
+		piece.AssemblyAngularVelocity =
+			Vector3.new(random:NextNumber(-6, 6), random:NextNumber(-6, 6), random:NextNumber(-6, 6))
 
 		task.delay(HIT_PIECE_LIFETIME, function()
 			if piece.Parent then
@@ -1273,6 +1267,234 @@ function LuckyBlockController:_resetBlockVisualToRest(block: Model)
 	self._animVersion[block] = (self._animVersion[block] or 0) + 1
 end
 
+function LuckyBlockController:_setBrainrotDisplayPhysicalState(model: Model)
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+		end
+	end
+end
+
+function LuckyBlockController:_shrinkAndDestroyBrainrot(model: Model)
+	if not model or model.Parent == nil then
+		return
+	end
+
+	local currentScale = model:GetScale()
+	spr.stop(model)
+	spr.target(model, 1, 9, {
+		Scale = math.max(0.01, currentScale * 0.35),
+	})
+
+	task.delay(BRAINROT_REVEAL_TRANSITION_OVERLAP, function()
+		if model.Parent then
+			model:Destroy()
+		end
+	end)
+end
+
+function LuckyBlockController:_getNormalBrainrotTemplates(): { Model }
+	if self._normalBrainrotTemplates then
+		return self._normalBrainrotTemplates
+	end
+
+	local templates = {}
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local brainrots = assets and assets:FindFirstChild("Brainrots")
+	local normal = brainrots and brainrots:FindFirstChild("Normal")
+	if normal then
+		for _, child in normal:GetChildren() do
+			if child:IsA("Model") then
+				table.insert(templates, child)
+			end
+		end
+	end
+
+	self._normalBrainrotTemplates = templates
+	return templates
+end
+
+function LuckyBlockController:_getModelBottomY(model: Model): number
+	local minY = math.huge
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			local halfX = descendant.Size.X * 0.5
+			local halfY = descendant.Size.Y * 0.5
+			local halfZ = descendant.Size.Z * 0.5
+			local cf = descendant.CFrame
+			local extentY = math.abs(cf.XVector.Y) * halfX
+				+ math.abs(cf.YVector.Y) * halfY
+				+ math.abs(cf.ZVector.Y) * halfZ
+			local bottomY = cf.Position.Y - extentY
+			if bottomY < minY then
+				minY = bottomY
+			end
+		end
+	end
+
+	if minY == math.huge then
+		return model:GetPivot().Position.Y
+	end
+
+	return minY
+end
+
+function LuckyBlockController:_getRevealFloorY(block: Model, blockPosition: Vector3): number
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { block }
+	params.IgnoreWater = true
+
+	local castOrigin = blockPosition + Vector3.new(0, 12, 0)
+	local castDirection = Vector3.new(0, -80, 0)
+	local result = workspace:Raycast(castOrigin, castDirection, params)
+	if result then
+		return result.Position.Y + BRAINROT_REVEAL_HEIGHT_OFFSET
+	end
+
+	local _, blockSize = block:GetBoundingBox()
+	return blockPosition.Y - blockSize.Y * 0.5 + BRAINROT_REVEAL_HEIGHT_OFFSET
+end
+
+function LuckyBlockController:_getRevealYawRotation(blockPosition: Vector3): CFrame
+	local hrp = self._hrp
+	if not hrp then
+		return CFrame.new()
+	end
+
+	local toPlayer = hrp.Position - blockPosition
+	local planar = Vector3.new(toPlayer.X, 0, toPlayer.Z)
+	if planar.Magnitude < 0.001 then
+		return CFrame.new()
+	end
+
+	return CFrame.lookAt(Vector3.zero, planar.Unit)
+end
+
+function LuckyBlockController:_playBrainrotRevealCycle(blockPosition: Vector3, floorY: number)
+	local templates = self:_getNormalBrainrotTemplates()
+	if #templates == 0 then
+		return
+	end
+
+	local version = (self._brainrotRevealVersion or 0) + 1
+	self._brainrotRevealVersion = version
+
+	if self._brainrotRevealModel and self._brainrotRevealModel.Parent then
+		self._brainrotRevealModel:Destroy()
+	end
+	self._brainrotRevealModel = nil
+
+	local finalTemplate = templates[random:NextInteger(1, #templates)]
+	local totalCycles = random:NextInteger(BRAINROT_REVEAL_TOTAL_CYCLES_MIN, BRAINROT_REVEAL_TOTAL_CYCLES_MAX)
+	local activeModel = nil
+
+	for i = 1, totalCycles do
+		if self._brainrotRevealVersion ~= version then
+			if activeModel and activeModel.Parent then
+				activeModel:Destroy()
+			end
+			return
+		end
+
+		local isFinal = i == totalCycles
+		local template = if isFinal then finalTemplate else templates[random:NextInteger(1, #templates)]
+		local model = template:Clone()
+		self:_setBrainrotDisplayPhysicalState(model)
+		if not isFinal then
+			local highlight = Instance.new("Highlight")
+			highlight.FillColor = Color3.new(0, 0, 0)
+			highlight.FillTransparency = 1
+			highlight.OutlineColor = Color3.new(1, 1, 1)
+			highlight.OutlineTransparency = 1
+			highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			highlight.Adornee = model
+			highlight.Parent = model
+			spr.target(highlight, 0.72, 8, {
+				FillTransparency = 0,
+				OutlineTransparency = 0,
+			})
+		end
+
+		local baseScale = model:GetScale()
+		local yawRotation = self:_getRevealYawRotation(blockPosition)
+		model:PivotTo(CFrame.new(blockPosition) * yawRotation)
+		model:ScaleTo(baseScale)
+
+		local groundLift = floorY - self:_getModelBottomY(model)
+		local groundedBasePivot = model:GetPivot() + Vector3.new(0, groundLift, 0)
+		model:PivotTo(groundedBasePivot)
+
+		local pivotToFloor = groundedBasePivot.Position.Y - floorY
+		local function pivotForScale(targetScale: number): CFrame
+			local scaleFactor = targetScale / math.max(baseScale, 0.001)
+			local y = floorY + pivotToFloor * scaleFactor
+			local pos = groundedBasePivot.Position
+			return CFrame.new(pos.X, y, pos.Z) * yawRotation
+		end
+
+		model:ScaleTo(baseScale * BRAINROT_REVEAL_START_SCALE)
+		model:PivotTo(pivotForScale(baseScale * BRAINROT_REVEAL_START_SCALE))
+		model.Parent = workspace
+
+		task.delay(0.1, function()
+			SoundUtil.playDirectFromSoundsFolder("Tick")
+		end)
+
+		local previousModel = activeModel
+
+		spr.stop(model)
+		local firstTargetScale = if isFinal then baseScale else baseScale * BRAINROT_REVEAL_PEAK_SCALE
+		spr.target(model, 0.72, 8, {
+			Scale = firstTargetScale,
+			Pivot = pivotForScale(firstTargetScale),
+		})
+		task.wait(0.045)
+		if self._brainrotRevealVersion ~= version then
+			model:Destroy()
+			return
+		end
+		if not isFinal then
+			spr.target(model, 0.85, 7, {
+				Scale = baseScale * BRAINROT_REVEAL_LOW_SCALE,
+				Pivot = pivotForScale(baseScale * BRAINROT_REVEAL_LOW_SCALE),
+			})
+		end
+		if previousModel and previousModel.Parent then
+			self:_shrinkAndDestroyBrainrot(previousModel)
+		end
+
+		activeModel = model
+		self._brainrotRevealModel = model
+
+		local alpha = (i - 1) / math.max(totalCycles - 1, 1)
+		local delayDuration = BRAINROT_REVEAL_START_DELAY
+			+ (BRAINROT_REVEAL_END_DELAY - BRAINROT_REVEAL_START_DELAY) * (alpha * alpha)
+		task.wait(delayDuration)
+	end
+
+	if self._brainrotRevealVersion ~= version then
+		if activeModel and activeModel.Parent then
+			activeModel:Destroy()
+		end
+		return
+	end
+
+	task.delay(BRAINROT_REVEAL_FINAL_HOLD, function()
+		if self._brainrotRevealVersion ~= version then
+			return
+		end
+		local model = self._brainrotRevealModel
+		if model and model.Parent then
+			model:Destroy()
+		end
+		self._brainrotRevealModel = nil
+	end)
+end
+
 function LuckyBlockController:_onInput()
 	local hrp = self._hrp
 	if not hrp then
@@ -1291,7 +1513,11 @@ function LuckyBlockController:_onInput()
 			local character = Players.LocalPlayer.Character
 			if character then
 				local tool = character:FindFirstChildOfClass("Tool")
-				if not tool or typeof(tool:GetAttribute("Strength")) ~= "number" or tool:GetAttribute("Strength") <= 0 then
+				if
+					not tool
+					or typeof(tool:GetAttribute("Strength")) ~= "number"
+					or tool:GetAttribute("Strength") <= 0
+				then
 					self._notificationController:Show(
 						"Equip a Pickaxe!",
 						nil,
@@ -1306,6 +1532,7 @@ function LuckyBlockController:_onInput()
 			end
 
 			local blockPosition = closestBlock:GetPivot().Position
+			local revealFloorY = self:_getRevealFloorY(closestBlock, blockPosition)
 			self._luckyBlockService:TryHitBlock(closestBlock):andThen(function(ok, broke, blocksAwarded)
 				if ok then
 					SoundUtil.playFromSoundsFolder("BlockImpact")
@@ -1313,8 +1540,14 @@ function LuckyBlockController:_onInput()
 						SoundUtil.playFromSoundsFolder("BlockReward")
 						self:_spawnBreakEffect(closestBlock, blockPosition)
 						self:_spawnDebris(closestBlock, blockPosition, blocksAwarded or 1)
+						task.spawn(function()
+							self:_playBrainrotRevealCycle(blockPosition, revealFloorY)
+						end)
 						self:_resetBlockVisualToRest(closestBlock)
-						self._blockBrokenEvent:Fire(closestBlock.Name, LuckyBlockRarityConstants.normalizeRarity(closestBlock:GetAttribute("Rarity")))
+						self._blockBrokenEvent:Fire(
+							closestBlock.Name,
+							LuckyBlockRarityConstants.normalizeRarity(closestBlock:GetAttribute("Rarity"))
+						)
 					else
 						self:_spawnHitEffect(closestBlock, blockPosition)
 						self:_animateBlock(closestBlock, hrp.Position, blocksAwarded or 1)
@@ -1377,6 +1610,9 @@ function LuckyBlockController:KnitInit()
 	self._collectTextVersion = 0
 	self._highlightedBlock = nil
 	self._highlight = nil
+	self._normalBrainrotTemplates = nil
+	self._brainrotRevealVersion = 0
+	self._brainrotRevealModel = nil
 	self._debrisCollectedEvent = Instance.new("BindableEvent")
 	self._blockBrokenEvent = Instance.new("BindableEvent")
 end
