@@ -18,6 +18,7 @@ function PlotService:KnitInit()
 	self._availablePlots = {}
 	self._characterConns = {}
 	self._billboardRoots = {}
+	self.PlotAssigned = Instance.new("BindableEvent")
 end
 
 function PlotService:KnitStart()
@@ -161,6 +162,8 @@ function PlotService:_assignPlot(player: Player)
 	if player.Character then
 		self:_teleportToPlot(player, player.Character)
 	end
+
+	self.PlotAssigned:Fire(player, plot)
 end
 
 function PlotService:_freePlot(player: Player)

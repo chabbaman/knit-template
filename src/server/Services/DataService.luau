@@ -13,6 +13,7 @@ local PROFILE_TEMPLATE = {
 	Blocks = 0,
 	Level = 1,
 	XP = 0,
+	BrainrotPlacements = {},
 }
 
 local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
@@ -31,6 +32,8 @@ function DataService:KnitInit()
 	self._runtimeBlockCounts = {}
 	self._runtimeLevels = {}
 	self._runtimeXP = {}
+	self._runtimeBrainrotPlacements = {}
+	self.ProfileLoaded = Instance.new("BindableEvent")
 end
 
 function DataService:KnitStart()
@@ -65,6 +68,7 @@ function DataService:_playerAdded(player)
 			self._runtimeBlockCounts[player] = nil
 			self._runtimeLevels[player] = nil
 			self._runtimeXP[player] = nil
+			self._runtimeBrainrotPlacements[player] = nil
 			player:Kick("Profile session end - Please rejoin")
 		end)
 
@@ -73,12 +77,14 @@ function DataService:_playerAdded(player)
 			local blockCount = self:GetBlockCount(player)
 			local level = self:GetLevel(player)
 			local xp = self:GetXP(player)
+			self:GetBrainrotPlacements(player)
 			self._runtimeBlockCounts[player] = blockCount
 			self._runtimeLevels[player] = level
 			self._runtimeXP[player] = xp
 			self.Client.BlockCount:SetFor(player, blockCount)
 			self.Client.Level:SetFor(player, level)
 			self.Client.XP:SetFor(player, xp)
+			self.ProfileLoaded:Fire(player)
 		else
 			profile:EndSession()
 		end
@@ -91,6 +97,7 @@ function DataService:_playerRemoving(player)
 	self._runtimeBlockCounts[player] = nil
 	self._runtimeLevels[player] = nil
 	self._runtimeXP[player] = nil
+	self._runtimeBrainrotPlacements[player] = nil
 	local profile = self.Profiles[player]
 	if profile ~= nil then
 		profile:EndSession()
@@ -221,6 +228,49 @@ function DataService:AddXP(player: Player, amount: number): number
 	self.Client.Level:SetFor(player, nextLevel)
 	self.Client.XP:SetFor(player, nextXP)
 	return nextXP
+end
+
+function DataService:GetBrainrotPlacements(player: Player): { [string]: string }
+	local placements = {}
+
+	local profile = self.Profiles[player]
+	if profile ~= nil and typeof(profile.Data.BrainrotPlacements) == "table" then
+		for spotName, brainrotName in profile.Data.BrainrotPlacements do
+			if typeof(spotName) == "string" and typeof(brainrotName) == "string" and brainrotName ~= "" then
+				placements[spotName] = brainrotName
+			end
+		end
+	elseif typeof(self._runtimeBrainrotPlacements[player]) == "table" then
+		for spotName, brainrotName in self._runtimeBrainrotPlacements[player] do
+			if typeof(spotName) == "string" and typeof(brainrotName) == "string" and brainrotName ~= "" then
+				placements[spotName] = brainrotName
+			end
+		end
+	end
+
+	self._runtimeBrainrotPlacements[player] = placements
+	return placements
+end
+
+function DataService:SetBrainrotPlacement(player: Player, spotName: string, brainrotName: string): boolean
+	if typeof(spotName) ~= "string" or spotName == "" then
+		return false
+	end
+
+	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return false
+	end
+
+	local placements = self:GetBrainrotPlacements(player)
+	placements[spotName] = brainrotName
+	self._runtimeBrainrotPlacements[player] = placements
+
+	local profile = self.Profiles[player]
+	if profile ~= nil then
+		profile.Data.BrainrotPlacements = placements
+	end
+
+	return true
 end
 
 return DataService

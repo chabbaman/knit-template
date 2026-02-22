@@ -1,3 +1,4 @@
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -41,7 +42,6 @@ local HIT_PIECE_COUNT = 3
 local HIT_PIECE_LIFETIME = 1.2
 local HIT_PIECE_MIN_SIZE = 0.35
 local HIT_PIECE_MAX_SIZE = 0.7
-local BRAINROT_REVEAL_HEIGHT_OFFSET = 0.05
 local BRAINROT_REVEAL_START_SCALE = 0.08
 local BRAINROT_REVEAL_PEAK_SCALE = 1.02
 local BRAINROT_REVEAL_LOW_SCALE = 0.92
@@ -49,8 +49,14 @@ local BRAINROT_REVEAL_TOTAL_CYCLES_MIN = 13
 local BRAINROT_REVEAL_TOTAL_CYCLES_MAX = 19
 local BRAINROT_REVEAL_START_DELAY = 0.06
 local BRAINROT_REVEAL_END_DELAY = 0.32
-local BRAINROT_REVEAL_FINAL_HOLD = 1.5
 local BRAINROT_REVEAL_TRANSITION_OVERLAP = 0.09
+local LUCKY_BLOCK_TOOL_TAG = "Lucky Block"
+local THROW_ANIMATION_DURATION = 0.6
+local THROW_ARC_HEIGHT = 10
+local THROW_LANDING_BOUNCE_HEIGHT = 0.3
+local BRAINROT_BUY_TIMER_SECONDS = 60
+local BRAINROT_BILLBOARD_SIZE = UDim2.fromScale(5.8, 2.2)
+local BRAINROT_ATTACH_GAP = 0.2
 
 local random = Random.new()
 
@@ -869,6 +875,35 @@ function LuckyBlockController:_getClosestBlock(characterPosition: Vector3): (Mod
 	return closestBlock, closestSq
 end
 
+function LuckyBlockController:_isLuckyBlockModel(model: Model): boolean
+	local spawnType = model:GetAttribute("SpawnType")
+	if typeof(spawnType) == "string" and spawnType ~= "" then
+		return true
+	end
+
+	local maxHealth = model:GetAttribute("MaxHealth")
+	local health = model:GetAttribute("Health")
+	return typeof(maxHealth) == "number" and maxHealth > 0 and typeof(health) == "number"
+end
+
+function LuckyBlockController:_isPlacedBrainrotModel(model: Model): boolean
+	return model:GetAttribute("IsPlacedBrainrot") == true
+end
+
+function LuckyBlockController:_ensurePlacedBrainrotBillboard(model: Model)
+	local primaryPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primaryPart then
+		return
+	end
+
+	local existingBillboard = primaryPart:FindFirstChild("BrainrotBillboard")
+	if existingBillboard and existingBillboard:IsA("BillboardGui") then
+		return
+	end
+
+	self:_attachBrainrotBillboard(model, false)
+end
+
 function LuckyBlockController:_cacheBlocks()
 	local plotsFolder = workspace:FindFirstChild("Plots")
 	if not plotsFolder then
@@ -884,7 +919,11 @@ function LuckyBlockController:_cacheBlocks()
 
 	for _, plot in plotsFolder:GetChildren() do
 		for _, child in plot:GetChildren() do
-			if child:IsA("Model") then
+			if child:IsA("Model") and self:_isPlacedBrainrotModel(child) then
+				self:_ensurePlacedBrainrotBillboard(child)
+			end
+
+			if child:IsA("Model") and self:_isLuckyBlockModel(child) then
 				blocks[#blocks + 1] = child
 				current[child] = true
 
@@ -1278,6 +1317,319 @@ function LuckyBlockController:_setBrainrotDisplayPhysicalState(model: Model)
 	end
 end
 
+function LuckyBlockController:_clearLocalCarriedBrainrot()
+	local carried = self._carriedBrainrotModel
+	if carried and carried.Parent then
+		carried:Destroy()
+	end
+
+	self._carriedBrainrotModel = nil
+	self._carriedBrainrotName = nil
+end
+
+function LuckyBlockController:_attachBrainrotToLocalCharacter(model: Model)
+	if self._carriedBrainrotModel and self._carriedBrainrotModel ~= model then
+		self:_clearLocalCarriedBrainrot()
+	end
+
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return
+	end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return
+	end
+
+	local look = hrp.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.001 then
+		flatLook = Vector3.new(0, 0, -1)
+	else
+		flatLook = flatLook.Unit
+	end
+
+	local basePosition = hrp.Position + Vector3.new(0, hrp.Size.Y * 0.5, 0)
+	model:PivotTo(CFrame.lookAt(basePosition, basePosition + flatLook, Vector3.new(0, 1, 0)))
+
+	local desiredBottomY = hrp.Position.Y + hrp.Size.Y * 0.5 + BRAINROT_ATTACH_GAP
+	local bottomY = self:_getModelBottomY(model)
+	model:PivotTo(model:GetPivot() + Vector3.new(0, desiredBottomY - bottomY, 0))
+
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("WeldConstraint") and descendant.Name == "BrainrotCarryWeld" then
+			descendant:Destroy()
+		end
+	end
+
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = false
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+			descendant.Massless = true
+
+			local weld = Instance.new("WeldConstraint")
+			weld.Name = "BrainrotCarryWeld"
+			weld.Part0 = hrp
+			weld.Part1 = descendant
+			weld.Parent = descendant
+		end
+	end
+
+	self._carriedBrainrotModel = model
+	self._carriedBrainrotName = model.Name
+end
+
+function LuckyBlockController:_attachBrainrotBuyPrompt(model: Model)
+	local primaryPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primaryPart then
+		return
+	end
+
+	local existingPrompt = primaryPart:FindFirstChild("BuyPrompt")
+	if existingPrompt and existingPrompt:IsA("ProximityPrompt") then
+		existingPrompt:Destroy()
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "BuyPrompt"
+	prompt.Style = Enum.ProximityPromptStyle.Custom
+	prompt.ActionText = "Buy"
+	prompt.ObjectText = model.Name
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 10
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = primaryPart
+
+	prompt.Triggered:Connect(function(triggeringPlayer)
+		if triggeringPlayer and triggeringPlayer ~= Players.LocalPlayer then
+			return
+		end
+
+		if model:GetAttribute("IsBrainrotAttached") == true then
+			return
+		end
+
+		model:SetAttribute("IsBrainrotAttached", true)
+		prompt.Enabled = false
+		self:_attachBrainrotToLocalCharacter(model)
+
+		if self._luckyBlockService then
+			self._luckyBlockService:SetCarriedBrainrot(model.Name):catch(function(err)
+				warn(`[LuckyBlockController] SetCarriedBrainrot failed: {err}`)
+			end)
+		end
+	end)
+end
+
+function LuckyBlockController:_attachBrainrotBillboard(model: Model, withTimer: boolean?)
+	local primaryPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primaryPart then
+		return
+	end
+
+	local showTimer = if withTimer == nil then true else withTimer
+	local displayName = model:GetAttribute("BrainrotName")
+	if typeof(displayName) ~= "string" or displayName == "" then
+		displayName = model.Name
+	end
+
+	local existingBillboard = primaryPart:FindFirstChild("BrainrotBillboard")
+	if existingBillboard and existingBillboard:IsA("BillboardGui") then
+		existingBillboard:Destroy()
+	end
+
+	local _, modelSize = model:GetBoundingBox()
+	local rarity = LuckyBlockRarityConstants.normalizeRarity(model:GetAttribute("Rarity"))
+	local rarityGradient = LuckyBlockRarityConstants.getGradient(rarity)
+	local rarityStrokeColor = LuckyBlockRarityConstants.getStrokeColor(rarity)
+	local rarityColor = LuckyBlockRarityConstants.getColor(rarity)
+	local scaleTarget = source(0)
+	local timeLeftTarget = source(BRAINROT_BUY_TIMER_SECONDS)
+
+	local destroyUi = root(function()
+		local animatedScale = spring(scaleTarget, 0.3, 0.65)
+
+		create("BillboardGui")({
+			Name = "BrainrotBillboard",
+			Active = true,
+			Brightness = 1.5,
+			MaxDistance = 100,
+			ResetOnSpawn = false,
+			Size = function()
+				local s = animatedScale()
+				return UDim2.fromScale(BRAINROT_BILLBOARD_SIZE.X.Scale * s, BRAINROT_BILLBOARD_SIZE.Y.Scale * s)
+			end,
+			StudsOffsetWorldSpace = Vector3.new(0, modelSize.Y * 0.5 + 1.3, 0),
+			ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+			Adornee = primaryPart,
+			Parent = primaryPart,
+
+			create("Frame")({
+				Name = "Inner",
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(1, 1),
+
+				create("UIListLayout")({
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					SortOrder = Enum.SortOrder.LayoutOrder,
+					VerticalAlignment = Enum.VerticalAlignment.Center,
+				}),
+
+				create("TextLabel")({
+					Name = "Name",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -3,
+					Size = UDim2.fromScale(1, 0.55),
+					Text = displayName,
+					TextColor3 = Color3.new(1, 1, 1),
+					TextScaled = true,
+
+					create("UIGradient")({
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(210, 225, 255)),
+						}),
+						Rotation = -90,
+					}),
+
+					create("UIStroke")({
+						Color = Color3.fromRGB(20, 24, 40),
+						LineJoinMode = Enum.LineJoinMode.Round,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					}),
+				}),
+
+				create("TextLabel")({
+					Name = "Rarity",
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					FontFace = Font.new(
+						"rbxasset://fonts/families/FredokaOne.json",
+						Enum.FontWeight.Heavy,
+						Enum.FontStyle.Normal
+					),
+					LayoutOrder = -2,
+					Size = UDim2.fromScale(1, 0.32),
+					Text = rarity,
+					TextColor3 = rarityColor,
+					TextScaled = true,
+
+					create("UIGradient")({
+						Color = rarityGradient,
+						Rotation = -90,
+					}),
+
+					create("UIStroke")({
+						Color = rarityStrokeColor,
+						LineJoinMode = Enum.LineJoinMode.Round,
+						StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+						Thickness = 0.05,
+					}),
+				}),
+
+				create("Frame")({
+					Name = "TimeLeft",
+					BackgroundTransparency = 1,
+					LayoutOrder = -1,
+					Size = UDim2.fromScale(0.6, 0.3),
+					Visible = showTimer,
+
+					create("ImageLabel")({
+						AnchorPoint = Vector2.new(0, 0.5),
+						BackgroundTransparency = 1,
+						Image = "rbxassetid://89665851185071",
+						LayoutOrder = -1,
+						Position = UDim2.fromScale(0, 0.5),
+						ScaleType = Enum.ScaleType.Fit,
+						Size = UDim2.fromScale(0.28, 1),
+					}),
+
+					create("TextLabel")({
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						FontFace = Font.new(
+							"rbxasset://fonts/families/GothamSSm.json",
+							Enum.FontWeight.Heavy,
+							Enum.FontStyle.Normal
+						),
+						LayoutOrder = 2,
+						Size = UDim2.fromScale(0.6, 1),
+						Text = function()
+							return `{math.ceil(math.max(0, timeLeftTarget()))}s`
+						end,
+						TextColor3 = Color3.new(1, 1, 1),
+						TextScaled = true,
+						TextXAlignment = Enum.TextXAlignment.Left,
+
+						create("UIGradient")({
+							Color = ColorSequence.new({
+								ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 170, 255)),
+								ColorSequenceKeypoint.new(1, Color3.fromRGB(85, 85, 255)),
+							}),
+							Rotation = -90,
+						}),
+
+						create("UIStroke")({
+							LineJoinMode = Enum.LineJoinMode.Miter,
+							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
+							Thickness = 0.05,
+						}),
+					}),
+
+					create("UIListLayout")({
+						FillDirection = Enum.FillDirection.Horizontal,
+						HorizontalAlignment = Enum.HorizontalAlignment.Center,
+						Padding = UDim.new(0.05, 0),
+						SortOrder = Enum.SortOrder.LayoutOrder,
+					}),
+				}),
+			}),
+		})
+	end)
+
+	scaleTarget(1)
+
+	local conn
+	if showTimer then
+		conn = RunService.Heartbeat:Connect(function(dt)
+			if model.Parent == nil then
+				if conn then
+					conn:Disconnect()
+				end
+				destroyUi()
+				return
+			end
+
+			local nextTime = math.max(0, timeLeftTarget() - dt)
+			timeLeftTarget(nextTime)
+			if nextTime <= 0 then
+				conn:Disconnect()
+			end
+		end)
+	end
+
+	model.Destroying:Connect(function()
+		if conn then
+			conn:Disconnect()
+		end
+		destroyUi()
+	end)
+end
+
 function LuckyBlockController:_shrinkAndDestroyBrainrot(model: Model)
 	if not model or model.Parent == nil then
 		return
@@ -1342,23 +1694,6 @@ function LuckyBlockController:_getModelBottomY(model: Model): number
 	return minY
 end
 
-function LuckyBlockController:_getRevealFloorY(block: Model, blockPosition: Vector3): number
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { block }
-	params.IgnoreWater = true
-
-	local castOrigin = blockPosition + Vector3.new(0, 12, 0)
-	local castDirection = Vector3.new(0, -80, 0)
-	local result = workspace:Raycast(castOrigin, castDirection, params)
-	if result then
-		return result.Position.Y + BRAINROT_REVEAL_HEIGHT_OFFSET
-	end
-
-	local _, blockSize = block:GetBoundingBox()
-	return blockPosition.Y - blockSize.Y * 0.5 + BRAINROT_REVEAL_HEIGHT_OFFSET
-end
-
 function LuckyBlockController:_getRevealYawRotation(blockPosition: Vector3): CFrame
 	local hrp = self._hrp
 	if not hrp then
@@ -1374,36 +1709,46 @@ function LuckyBlockController:_getRevealYawRotation(blockPosition: Vector3): CFr
 	return CFrame.lookAt(Vector3.zero, planar.Unit)
 end
 
-function LuckyBlockController:_playBrainrotRevealCycle(blockPosition: Vector3, floorY: number)
+function LuckyBlockController:_playBrainrotRevealCycle(
+	blockPosition: Vector3,
+	floorY: number,
+	finalBrainrotName: string?,
+	revealSeed: number?
+)
 	local templates = self:_getNormalBrainrotTemplates()
 	if #templates == 0 then
 		return
 	end
 
-	local version = (self._brainrotRevealVersion or 0) + 1
-	self._brainrotRevealVersion = version
-
-	if self._brainrotRevealModel and self._brainrotRevealModel.Parent then
-		self._brainrotRevealModel:Destroy()
+	local revealRandom = random
+	if typeof(revealSeed) == "number" then
+		revealRandom = Random.new(math.max(1, math.floor(revealSeed)))
 	end
-	self._brainrotRevealModel = nil
 
-	local finalTemplate = templates[random:NextInteger(1, #templates)]
-	local totalCycles = random:NextInteger(BRAINROT_REVEAL_TOTAL_CYCLES_MIN, BRAINROT_REVEAL_TOTAL_CYCLES_MAX)
+	local finalTemplate = nil
+	if typeof(finalBrainrotName) == "string" and finalBrainrotName ~= "" then
+		for _, template in templates do
+			if template.Name == finalBrainrotName then
+				finalTemplate = template
+				break
+			end
+		end
+	end
+	if not finalTemplate then
+		finalTemplate = templates[revealRandom:NextInteger(1, #templates)]
+	end
+	local totalCycles = revealRandom:NextInteger(BRAINROT_REVEAL_TOTAL_CYCLES_MIN, BRAINROT_REVEAL_TOTAL_CYCLES_MAX)
 	local activeModel = nil
 
 	for i = 1, totalCycles do
-		if self._brainrotRevealVersion ~= version then
-			if activeModel and activeModel.Parent then
-				activeModel:Destroy()
-			end
-			return
-		end
-
 		local isFinal = i == totalCycles
-		local template = if isFinal then finalTemplate else templates[random:NextInteger(1, #templates)]
+		local template = if isFinal then finalTemplate else templates[revealRandom:NextInteger(1, #templates)]
 		local model = template:Clone()
 		self:_setBrainrotDisplayPhysicalState(model)
+		if isFinal then
+			self:_attachBrainrotBuyPrompt(model)
+			self:_attachBrainrotBillboard(model)
+		end
 		if not isFinal then
 			local highlight = Instance.new("Highlight")
 			highlight.FillColor = Color3.new(0, 0, 0)
@@ -1453,10 +1798,6 @@ function LuckyBlockController:_playBrainrotRevealCycle(blockPosition: Vector3, f
 			Pivot = pivotForScale(firstTargetScale),
 		})
 		task.wait(0.045)
-		if self._brainrotRevealVersion ~= version then
-			model:Destroy()
-			return
-		end
 		if not isFinal then
 			spr.target(model, 0.85, 7, {
 				Scale = baseScale * BRAINROT_REVEAL_LOW_SCALE,
@@ -1468,30 +1809,149 @@ function LuckyBlockController:_playBrainrotRevealCycle(blockPosition: Vector3, f
 		end
 
 		activeModel = model
-		self._brainrotRevealModel = model
 
 		local alpha = (i - 1) / math.max(totalCycles - 1, 1)
 		local delayDuration = BRAINROT_REVEAL_START_DELAY
 			+ (BRAINROT_REVEAL_END_DELAY - BRAINROT_REVEAL_START_DELAY) * (alpha * alpha)
 		task.wait(delayDuration)
 	end
+end
 
-	if self._brainrotRevealVersion ~= version then
-		if activeModel and activeModel.Parent then
-			activeModel:Destroy()
-		end
+function LuckyBlockController:_isLuckyBlockTool(instance: Instance): boolean
+	return instance:IsA("Tool") and CollectionService:HasTag(instance, LUCKY_BLOCK_TOOL_TAG)
+end
+
+function LuckyBlockController:_disconnectLuckyBlockTool(tool: Tool)
+	local conn = self._luckyBlockToolConns[tool]
+	if conn then
+		conn:Disconnect()
+		self._luckyBlockToolConns[tool] = nil
+	end
+end
+
+function LuckyBlockController:_connectLuckyBlockTool(tool: Tool)
+	if self._luckyBlockToolConns[tool] then
 		return
 	end
 
-	task.delay(BRAINROT_REVEAL_FINAL_HOLD, function()
-		if self._brainrotRevealVersion ~= version then
+	self._luckyBlockToolConns[tool] = tool.Activated:Connect(function()
+		if not self._luckyBlockService then
 			return
 		end
-		local model = self._brainrotRevealModel
-		if model and model.Parent then
-			model:Destroy()
+
+		self._luckyBlockService:ThrowLuckyBlock(tool)
+			:andThen(function(ok, block, startPosition, targetPosition)
+				if not ok then
+					return
+				end
+
+				if typeof(startPosition) ~= "Vector3" or typeof(targetPosition) ~= "Vector3" then
+					return
+				end
+
+				if not block or not block:IsA("Model") then
+					return
+				end
+
+				self:_animateThrownLuckyBlock(block, startPosition, targetPosition)
+			end)
+			:catch(function(err)
+				warn(`[LuckyBlockController] ThrowLuckyBlock failed: {err}`)
+			end)
+	end)
+end
+
+function LuckyBlockController:_animateThrownLuckyBlock(block: Model, startPosition: Vector3, targetPosition: Vector3)
+	local baseScale = block:GetScale()
+	local elapsed = 0
+
+	spr.stop(block)
+	SoundUtil.playFromSoundsFolder("BlockThrow")
+
+	local connection
+	connection = RunService.RenderStepped:Connect(function(dt)
+		if block.Parent == nil then
+			connection:Disconnect()
+			return
 		end
-		self._brainrotRevealModel = nil
+
+		elapsed += dt
+		local progress = math.clamp(elapsed / THROW_ANIMATION_DURATION, 0, 1)
+
+		local currentX = startPosition.X + (targetPosition.X - startPosition.X) * progress
+		local currentZ = startPosition.Z + (targetPosition.Z - startPosition.Z) * progress
+
+		local baseY = startPosition.Y + (targetPosition.Y - startPosition.Y) * progress
+		local arcOffset = 4 * THROW_ARC_HEIGHT * progress * (1 - progress)
+		local currentY = baseY + arcOffset
+
+		local rotationAngle = progress * math.pi * 2
+		local rotation = CFrame.Angles(rotationAngle, rotationAngle * 0.5, 0)
+
+		block:ScaleTo(baseScale)
+		block:PivotTo(CFrame.new(currentX, currentY, currentZ) * rotation)
+
+		if progress >= 1 then
+			connection:Disconnect()
+			block:ScaleTo(baseScale)
+			block:PivotTo(CFrame.new(targetPosition))
+			SoundUtil.playFromSoundsFolder("BlockGround")
+			local tiltA = CFrame.Angles(math.rad(8), math.rad(4), math.rad(-7))
+			local tiltB = CFrame.Angles(math.rad(-6), math.rad(-5), math.rad(6))
+			spr.target(block, 0.26, 11, {
+				Pivot = CFrame.new(targetPosition + Vector3.new(0, THROW_LANDING_BOUNCE_HEIGHT, 0)) * tiltA,
+			})
+
+			task.delay(0.06, function()
+				if block.Parent == nil then
+					return
+				end
+
+				spr.target(block, 0.3, 12, {
+					Pivot = CFrame.new(targetPosition + Vector3.new(0.12, -0.04, -0.08)) * tiltB,
+				})
+			end)
+
+			task.delay(0.12, function()
+				if block.Parent == nil then
+					return
+				end
+
+				spr.target(block, 0.4, 10, {
+					Pivot = CFrame.new(targetPosition),
+				})
+			end)
+		end
+	end)
+end
+
+function LuckyBlockController:_bindLuckyBlockToolsForCharacter(character: Model)
+	if self._characterToolAddedConn then
+		self._characterToolAddedConn:Disconnect()
+		self._characterToolAddedConn = nil
+	end
+
+	if self._characterToolRemovedConn then
+		self._characterToolRemovedConn:Disconnect()
+		self._characterToolRemovedConn = nil
+	end
+
+	for _, child in character:GetChildren() do
+		if self:_isLuckyBlockTool(child) then
+			self:_connectLuckyBlockTool(child)
+		end
+	end
+
+	self._characterToolAddedConn = character.ChildAdded:Connect(function(child)
+		if self:_isLuckyBlockTool(child) then
+			self:_connectLuckyBlockTool(child)
+		end
+	end)
+
+	self._characterToolRemovedConn = character.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			self:_disconnectLuckyBlockTool(child)
+		end
 	end)
 end
 
@@ -1499,6 +1959,14 @@ function LuckyBlockController:_onInput()
 	local hrp = self._hrp
 	if not hrp then
 		return
+	end
+
+	local character = Players.LocalPlayer.Character
+	if character then
+		local equippedTool = character:FindFirstChildOfClass("Tool")
+		if equippedTool and self:_isLuckyBlockTool(equippedTool) then
+			return
+		end
 	end
 
 	local blocks = self._blocks
@@ -1532,7 +2000,6 @@ function LuckyBlockController:_onInput()
 			end
 
 			local blockPosition = closestBlock:GetPivot().Position
-			local revealFloorY = self:_getRevealFloorY(closestBlock, blockPosition)
 			self._luckyBlockService:TryHitBlock(closestBlock):andThen(function(ok, broke, blocksAwarded)
 				if ok then
 					SoundUtil.playFromSoundsFolder("BlockImpact")
@@ -1540,9 +2007,6 @@ function LuckyBlockController:_onInput()
 						SoundUtil.playFromSoundsFolder("BlockReward")
 						self:_spawnBreakEffect(closestBlock, blockPosition)
 						self:_spawnDebris(closestBlock, blockPosition, blocksAwarded or 1)
-						task.spawn(function()
-							self:_playBrainrotRevealCycle(blockPosition, revealFloorY)
-						end)
 						self:_resetBlockVisualToRest(closestBlock)
 						self._blockBrokenEvent:Fire(
 							closestBlock.Name,
@@ -1601,6 +2065,9 @@ function LuckyBlockController:KnitInit()
 	self._baseFov = nil
 	self._fovImpulseVersion = 0
 	self._luckyBlockService = nil
+	self._luckyBlockToolConns = {}
+	self._characterToolAddedConn = nil
+	self._characterToolRemovedConn = nil
 	self._collectUiRoot = nil
 	self._collectVisibleTarget = nil
 	self._collectPulseTarget = nil
@@ -1611,8 +2078,8 @@ function LuckyBlockController:KnitInit()
 	self._highlightedBlock = nil
 	self._highlight = nil
 	self._normalBrainrotTemplates = nil
-	self._brainrotRevealVersion = 0
-	self._brainrotRevealModel = nil
+	self._carriedBrainrotModel = nil
+	self._carriedBrainrotName = nil
 	self._debrisCollectedEvent = Instance.new("BindableEvent")
 	self._blockBrokenEvent = Instance.new("BindableEvent")
 end
@@ -1621,6 +2088,28 @@ function LuckyBlockController:KnitStart()
 	self._cameraShake = Knit.GetController("CameraShakeController")
 	self._notificationController = Knit.GetController("NotificationController")
 	self._luckyBlockService = Knit.GetService("LuckyBlockService")
+	self._luckyBlockService.BrainrotReveal:Connect(function(
+		_owner: Player,
+		blockPosition: Vector3,
+		floorY: number,
+		brainrotName: string,
+		revealSeed: number
+	)
+		if typeof(blockPosition) ~= "Vector3" or typeof(floorY) ~= "number" then
+			return
+		end
+
+		task.spawn(function()
+			self:_playBrainrotRevealCycle(blockPosition, floorY, brainrotName, revealSeed)
+		end)
+	end)
+	self._luckyBlockService.BrainrotPlaced:Connect(function(owner: Player)
+		if owner ~= Players.LocalPlayer then
+			return
+		end
+
+		self:_clearLocalCarriedBrainrot()
+	end)
 	local camera = workspace.CurrentCamera
 	if camera then
 		self._baseFov = camera.FieldOfView
@@ -1632,6 +2121,7 @@ function LuckyBlockController:KnitStart()
 	local function onCharacterAdded(character: Model)
 		self._hrp = character:WaitForChild("HumanoidRootPart")
 		self:_setupCollectBillboard(self._hrp)
+		self:_bindLuckyBlockToolsForCharacter(character)
 	end
 
 	player.CharacterAdded:Connect(onCharacterAdded)
@@ -1642,6 +2132,21 @@ function LuckyBlockController:KnitStart()
 	player.CharacterRemoving:Connect(function()
 		self:_cleanupCollectBillboard()
 		self._hrp = nil
+
+		if self._characterToolAddedConn then
+			self._characterToolAddedConn:Disconnect()
+			self._characterToolAddedConn = nil
+		end
+
+		if self._characterToolRemovedConn then
+			self._characterToolRemovedConn:Disconnect()
+			self._characterToolRemovedConn = nil
+		end
+
+		for tool, conn in self._luckyBlockToolConns do
+			conn:Disconnect()
+			self._luckyBlockToolConns[tool] = nil
+		end
 	end)
 
 	self:_cacheBlocks()
