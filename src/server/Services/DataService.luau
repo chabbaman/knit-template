@@ -14,6 +14,7 @@ local PROFILE_TEMPLATE = {
 	Level = 1,
 	XP = 0,
 	BrainrotPlacements = {},
+	ThrownLuckyBlocks = {},
 }
 
 local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
@@ -33,6 +34,7 @@ function DataService:KnitInit()
 	self._runtimeLevels = {}
 	self._runtimeXP = {}
 	self._runtimeBrainrotPlacements = {}
+	self._runtimeThrownLuckyBlocks = {}
 	self.ProfileLoaded = Instance.new("BindableEvent")
 end
 
@@ -69,6 +71,7 @@ function DataService:_playerAdded(player)
 			self._runtimeLevels[player] = nil
 			self._runtimeXP[player] = nil
 			self._runtimeBrainrotPlacements[player] = nil
+			self._runtimeThrownLuckyBlocks[player] = nil
 			player:Kick("Profile session end - Please rejoin")
 		end)
 
@@ -78,6 +81,7 @@ function DataService:_playerAdded(player)
 			local level = self:GetLevel(player)
 			local xp = self:GetXP(player)
 			self:GetBrainrotPlacements(player)
+			self:GetThrownLuckyBlocks(player)
 			self._runtimeBlockCounts[player] = blockCount
 			self._runtimeLevels[player] = level
 			self._runtimeXP[player] = xp
@@ -98,6 +102,7 @@ function DataService:_playerRemoving(player)
 	self._runtimeLevels[player] = nil
 	self._runtimeXP[player] = nil
 	self._runtimeBrainrotPlacements[player] = nil
+	self._runtimeThrownLuckyBlocks[player] = nil
 	local profile = self.Profiles[player]
 	if profile ~= nil then
 		profile:EndSession()
@@ -268,6 +273,66 @@ function DataService:SetBrainrotPlacement(player: Player, spotName: string, brai
 	local profile = self.Profiles[player]
 	if profile ~= nil then
 		profile.Data.BrainrotPlacements = placements
+	end
+
+	return true
+end
+
+function DataService:GetThrownLuckyBlocks(player: Player): { [string]: any }
+	local blocks = {}
+
+	local profile = self.Profiles[player]
+	if profile ~= nil and typeof(profile.Data.ThrownLuckyBlocks) == "table" then
+		for blockId, blockData in profile.Data.ThrownLuckyBlocks do
+			if typeof(blockId) == "string" and typeof(blockData) == "table" then
+				blocks[blockId] = table.clone(blockData)
+			end
+		end
+	elseif typeof(self._runtimeThrownLuckyBlocks[player]) == "table" then
+		for blockId, blockData in self._runtimeThrownLuckyBlocks[player] do
+			if typeof(blockId) == "string" and typeof(blockData) == "table" then
+				blocks[blockId] = table.clone(blockData)
+			end
+		end
+	end
+
+	self._runtimeThrownLuckyBlocks[player] = blocks
+	return blocks
+end
+
+function DataService:SetThrownLuckyBlock(player: Player, blockId: string, blockData: { [string]: any }): boolean
+	if typeof(blockId) ~= "string" or blockId == "" then
+		return false
+	end
+
+	if typeof(blockData) ~= "table" then
+		return false
+	end
+
+	local blocks = self:GetThrownLuckyBlocks(player)
+	blocks[blockId] = table.clone(blockData)
+	self._runtimeThrownLuckyBlocks[player] = blocks
+
+	local profile = self.Profiles[player]
+	if profile ~= nil then
+		profile.Data.ThrownLuckyBlocks = blocks
+	end
+
+	return true
+end
+
+function DataService:RemoveThrownLuckyBlock(player: Player, blockId: string): boolean
+	if typeof(blockId) ~= "string" or blockId == "" then
+		return false
+	end
+
+	local blocks = self:GetThrownLuckyBlocks(player)
+	blocks[blockId] = nil
+	self._runtimeThrownLuckyBlocks[player] = blocks
+
+	local profile = self.Profiles[player]
+	if profile ~= nil then
+		profile.Data.ThrownLuckyBlocks = blocks
 	end
 
 	return true

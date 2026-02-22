@@ -34,6 +34,7 @@ local PLACED_BRAINROT_PREFIX = "PlacedBrainrot_"
 local PLACED_BRAINROT_Y_OFFSET = 5
 local PLACED_BRAINROT_FLOAT_AMPLITUDE = 0.45
 local PLACED_BRAINROT_FLOAT_SPEED = 1.8
+local SAVED_BLOCK_ID_ATTRIBUTE = "SavedThrownBlockId"
 
 local random = Random.new()
 
@@ -397,6 +398,8 @@ function LuckyBlockService:_restorePlacementsForPlayerPlot(player: Player, plot:
 			self:_spawnPlacedBrainrotAtSpot(plot, spotName, brainrotName)
 		end
 	end
+
+	self:_restoreThrownLuckyBlocksForPlayerPlot(player, plot)
 end
 
 function LuckyBlockService:_tryRestorePlacementsForPlayer(player: Player)
@@ -550,6 +553,221 @@ function LuckyBlockService:_clampToSpawnPartXZ(spawnPart: BasePart, position: Ve
 	return spawnPart.CFrame:PointToWorldSpace(clampedLocal)
 end
 
+function LuckyBlockService:_getPlotBaseCFrame(plot: Instance): CFrame?
+	if plot:IsA("Model") then
+		return plot:GetPivot()
+	end
+
+	if plot:IsA("BasePart") then
+		return plot.CFrame
+	end
+
+	local spawnPart = plot:FindFirstChild("SpawnPart")
+	if spawnPart and spawnPart:IsA("BasePart") then
+		return spawnPart.CFrame
+	end
+
+	return nil
+end
+
+function LuckyBlockService:_encodeCFrame(cframe: CFrame): { number }
+	local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = cframe:GetComponents()
+	return { x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 }
+end
+
+function LuckyBlockService:_decodeCFrame(data: any): CFrame?
+	if typeof(data) ~= "table" or #data ~= 12 then
+		return nil
+	end
+
+	for i = 1, 12 do
+		if typeof(data[i]) ~= "number" then
+			return nil
+		end
+	end
+
+	return CFrame.new(table.unpack(data))
+end
+
+function LuckyBlockService:_findSavedBlockInPlot(plot: Instance, blockId: string): Model?
+	for _, child in plot:GetChildren() do
+		if child:IsA("Model") then
+			local id = child:GetAttribute(SAVED_BLOCK_ID_ATTRIBUTE)
+			if typeof(id) == "string" and id == blockId then
+				return child
+			end
+		end
+	end
+
+	return nil
+end
+
+function LuckyBlockService:_assignSavedBlockId(block: Model, player: Player): string
+	local existing = block:GetAttribute(SAVED_BLOCK_ID_ATTRIBUTE)
+	if typeof(existing) == "string" and existing ~= "" then
+		return existing
+	end
+
+	local id = `{player.UserId}_{math.floor(os.clock() * 1000)}_{random:NextInteger(1000, 9999)}`
+	block:SetAttribute(SAVED_BLOCK_ID_ATTRIBUTE, id)
+	return id
+end
+
+function LuckyBlockService:_saveThrownLuckyBlockForPlayer(player: Player, plot: Instance, block: Model)
+	if not self._dataService then
+		return
+	end
+
+	local baseCFrame = self:_getPlotBaseCFrame(plot)
+	if not baseCFrame then
+		return
+	end
+
+	local blockId = self:_assignSavedBlockId(block, player)
+	-- Persist position only so restored blocks keep a stable upright pivot
+	-- regardless of plot orientation changes between sessions.
+	local relativePosition = baseCFrame:PointToObjectSpace(block:GetPivot().Position)
+	local relativeCFrame = CFrame.new(relativePosition)
+	local blockData = {
+		ModelName = block.Name,
+		SpawnType = block:GetAttribute("SpawnType"),
+		RelativeCFrame = self:_encodeCFrame(relativeCFrame),
+	}
+
+	self._dataService:SetThrownLuckyBlock(player, blockId, blockData)
+end
+
+function LuckyBlockService:_removeSavedThrownLuckyBlockForPlayer(player: Player, block: Model)
+	if not self._dataService then
+		return
+	end
+
+	local blockId = block:GetAttribute(SAVED_BLOCK_ID_ATTRIBUTE)
+	if typeof(blockId) ~= "string" or blockId == "" then
+		return
+	end
+
+	self._dataService:RemoveThrownLuckyBlock(player, blockId)
+end
+
+function LuckyBlockService:_cloneLuckyBlockFromAssets(spawnType: string?, modelName: string?): Model?
+	local assets = ReplicatedStorage:FindFirstChild("Assets")
+	local luckyBlocks = assets and assets:FindFirstChild("Lucky Blocks")
+	if not luckyBlocks then
+		return nil
+	end
+
+	if typeof(spawnType) == "string" and spawnType ~= "" then
+		local byType = luckyBlocks:FindFirstChild(spawnType)
+		if byType and byType:IsA("Model") then
+			return byType:Clone()
+		end
+	end
+
+	if typeof(modelName) == "string" and modelName ~= "" then
+		local byName = luckyBlocks:FindFirstChild(modelName)
+		if byName and byName:IsA("Model") then
+			return byName:Clone()
+		end
+	end
+
+	local fallback = luckyBlocks:FindFirstChild(DEFAULT_SPAWN_TYPE)
+	if fallback and fallback:IsA("Model") then
+		return fallback:Clone()
+	end
+
+	return nil
+end
+
+function LuckyBlockService:_cloneLuckyBlockFromPlayerTools(player: Player, spawnType: string?, modelName: string?): Model?
+	local containers = {
+		player:FindFirstChild("Backpack"),
+		player:FindFirstChild("StarterGear"),
+		player.Character,
+	}
+
+	local fallbackTool = nil
+	for _, container in containers do
+		if container then
+			for _, child in container:GetChildren() do
+				if child:IsA("Tool") and CollectionService:HasTag(child, LUCKY_BLOCK_TOOL_TAG) then
+					if not fallbackTool then
+						fallbackTool = child
+					end
+
+					local toolSpawnType = child:GetAttribute("SpawnType")
+					local spawnTypeMatch = typeof(spawnType) == "string" and spawnType ~= ""
+						and typeof(toolSpawnType) == "string"
+						and toolSpawnType == spawnType
+					local nameMatch = typeof(modelName) == "string" and modelName ~= "" and child.Name == modelName
+					if spawnTypeMatch or nameMatch then
+						return self:_cloneToolAsBlockModel(child)
+					end
+				end
+			end
+		end
+	end
+
+	if fallbackTool then
+		return self:_cloneToolAsBlockModel(fallbackTool)
+	end
+
+	return nil
+end
+
+function LuckyBlockService:_cloneSavedLuckyBlockModel(player: Player, blockData: any): Model?
+	if typeof(blockData) ~= "table" then
+		return nil
+	end
+
+	local spawnType = blockData.SpawnType
+	local modelName = blockData.ModelName
+
+	local cloned = self:_cloneLuckyBlockFromAssets(spawnType, modelName)
+	if cloned then
+		return cloned
+	end
+
+	return self:_cloneLuckyBlockFromPlayerTools(player, spawnType, modelName)
+end
+
+function LuckyBlockService:_restoreThrownLuckyBlocksForPlayerPlot(player: Player, plot: Instance)
+	if not self._dataService then
+		return
+	end
+
+	local baseCFrame = self:_getPlotBaseCFrame(plot)
+	if not baseCFrame then
+		return
+	end
+
+	local savedBlocks = self._dataService:GetThrownLuckyBlocks(player)
+	for blockId, blockData in savedBlocks do
+		if typeof(blockId) == "string" and not self:_findSavedBlockInPlot(plot, blockId) then
+			local relativeCFrame = self:_decodeCFrame(blockData.RelativeCFrame)
+			local block = self:_cloneSavedLuckyBlockModel(player, blockData)
+			if relativeCFrame and block then
+				local spawnType = blockData.SpawnType
+				local modelName = blockData.ModelName
+				local worldPosition = baseCFrame:PointToWorldSpace(relativeCFrame.Position)
+				local worldCFrame = CFrame.new(worldPosition)
+				if typeof(modelName) == "string" and modelName ~= "" then
+					block.Name = modelName
+				end
+				block:SetAttribute(SAVED_BLOCK_ID_ATTRIBUTE, blockId)
+				block:PivotTo(worldCFrame)
+				block.Parent = plot
+				self:_setBlockPhysicalState(block, true, true)
+				self:_initializeBlock(block, if typeof(spawnType) == "string" then spawnType else nil)
+			else
+				if block then
+					block:Destroy()
+				end
+			end
+		end
+	end
+end
+
 function LuckyBlockService.Client:SetCarriedBrainrot(player: Player, brainrotName: string): boolean
 	return self.Server:_setCarriedBrainrot(player, brainrotName)
 end
@@ -693,6 +911,7 @@ function LuckyBlockService:_throwLuckyBlock(player: Player, tool: Instance): (bo
 		block.Parent = plot
 		self:_setBlockPhysicalState(block, true, true)
 		self:_initializeBlock(block, spawnType)
+		self:_saveThrownLuckyBlockForPlayer(player, plot, block)
 	end)
 
 	return true, block, startPosition, floorPosition
@@ -933,6 +1152,8 @@ function LuckyBlockService:_tryHitBlock(player: Player, block: Instance): (boole
 	end
 	local broke = newHealth <= 0
 	if broke then
+		self:_removeSavedThrownLuckyBlockForPlayer(player, typedBlock)
+
 		local blockPosition = typedBlock:GetPivot().Position
 		local revealFloorY = self:_getRevealFloorY(typedBlock, blockPosition)
 		local brainrotTemplateName = self:_rollBrainrotTemplateName()

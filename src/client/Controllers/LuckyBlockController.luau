@@ -87,8 +87,6 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 	self._healthFractionTargets[block] = healthFractionTarget
 	local progressPulseTarget = source(1)
 	self._progressPulseTargets[block] = progressPulseTarget
-	local timeLeftTarget = source(0)
-	self._timeLeftTargets[block] = timeLeftTarget
 	local rarityTarget = source(LuckyBlockRarityConstants.DEFAULT)
 	self._rarityTargets[block] = rarityTarget
 	local rarityColorTarget = source(LuckyBlockRarityConstants.getColor(LuckyBlockRarityConstants.DEFAULT))
@@ -264,67 +262,6 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 						Thickness = 0.05,
 					}),
 				}), ]]
-
-				create("Frame")({
-					Name = "TimeLeft",
-					BackgroundTransparency = 1,
-					LayoutOrder = -5,
-					Size = UDim2.fromScale(0.5, 0.2),
-
-					create("ImageLabel")({
-						Name = "ImageLabel",
-						AnchorPoint = Vector2.new(0, 0.5),
-						BackgroundTransparency = 1,
-						Image = "rbxassetid://89665851185071",
-						LayoutOrder = -1,
-						Position = UDim2.fromScale(0, 0.5),
-						ScaleType = Enum.ScaleType.Fit,
-						Size = UDim2.fromScale(0.3, 1),
-					}),
-
-					create("TextLabel")({
-						Name = "TimeLeft",
-						AnchorPoint = Vector2.new(0.5, 0.5),
-						BackgroundTransparency = 1,
-						FontFace = Font.new(
-							"rbxasset://fonts/families/GothamSSm.json",
-							Enum.FontWeight.Heavy,
-							Enum.FontStyle.Normal
-						),
-						LayoutOrder = 2,
-						Size = UDim2.fromScale(0.5, 1),
-						Text = function()
-							return `{math.ceil(math.max(0, timeLeftTarget()))}s`
-						end,
-						TextColor3 = Color3.new(1, 1, 1),
-						TextScaled = true,
-						TextXAlignment = Enum.TextXAlignment.Left,
-
-						create("UIGradient")({
-							Name = "UIGradient",
-							Color = ColorSequence.new({
-								ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 170, 255)),
-								ColorSequenceKeypoint.new(1, Color3.fromRGB(85, 85, 255)),
-							}),
-							Rotation = -90,
-						}),
-
-						create("UIStroke")({
-							Name = "UIStroke",
-							LineJoinMode = Enum.LineJoinMode.Miter,
-							StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize,
-							Thickness = 0.05,
-						}),
-					}),
-
-					create("UIListLayout")({
-						Name = "UIListLayout",
-						FillDirection = Enum.FillDirection.Horizontal,
-						HorizontalAlignment = Enum.HorizontalAlignment.Center,
-						Padding = UDim.new(0.05, 0),
-						SortOrder = Enum.SortOrder.LayoutOrder,
-					}),
-				}),
 
 				create("Frame")({
 					Name = "ProgressBar",
@@ -523,7 +460,6 @@ function LuckyBlockController:_createBillboard(block: Model, adornee: BasePart)
 		indicatorDestroy = indicatorDestroy,
 	}
 	self:_updateHealthForBlock(block)
-	self:_updateTimeLeftForBlock(block)
 	self:_updateRarityForBlock(block)
 	self:_pulseProgressBar(block)
 end
@@ -748,21 +684,6 @@ function LuckyBlockController:_updateHealthForBlock(block: Model)
 	end
 end
 
-function LuckyBlockController:_updateTimeLeftForBlock(block: Model)
-	local target = self._timeLeftTargets[block]
-	if not target then
-		return
-	end
-
-	local despawnAt = block:GetAttribute("DespawnAt")
-	if typeof(despawnAt) ~= "number" then
-		target(0)
-		return
-	end
-
-	target(math.max(0, despawnAt - workspace:GetServerTimeNow()))
-end
-
 function LuckyBlockController:_updateRarityForBlock(block: Model)
 	local rarityTarget = self._rarityTargets[block]
 	local rarityColorTarget = self._rarityColorTargets[block]
@@ -804,9 +725,6 @@ function LuckyBlockController:_setupBlock(block: Model)
 		block:GetAttributeChangedSignal("MaxHealth"):Connect(function()
 			self:_updateHealthForBlock(block)
 		end),
-		block:GetAttributeChangedSignal("DespawnAt"):Connect(function()
-			self:_updateTimeLeftForBlock(block)
-		end),
 		block:GetAttributeChangedSignal("Rarity"):Connect(function()
 			self:_updateRarityForBlock(block)
 		end),
@@ -829,7 +747,6 @@ function LuckyBlockController:_cleanupBlock(block: Model)
 	self._scaleTargets[block] = nil
 	self._healthFractionTargets[block] = nil
 	self._progressPulseTargets[block] = nil
-	self._timeLeftTargets[block] = nil
 	self._rarityTargets[block] = nil
 	self._rarityColorTargets[block] = nil
 	self._rarityStrokeColorTargets[block] = nil
@@ -967,6 +884,19 @@ function LuckyBlockController:_pivotForScale(originals, scaleFactor: number, nud
 		offset += nudge
 	end
 	return originals.pivot + offset
+end
+
+function LuckyBlockController:_uprightPivot(pivot: CFrame): CFrame
+	local position = pivot.Position
+	local look = pivot.LookVector
+	local planarLook = Vector3.new(look.X, 0, look.Z)
+	if planarLook.Magnitude < 0.001 then
+		planarLook = Vector3.new(0, 0, -1)
+	else
+		planarLook = planarLook.Unit
+	end
+
+	return CFrame.lookAt(position, position + planarLook, Vector3.new(0, 1, 0))
 end
 
 function LuckyBlockController:_spawnDebris(block: Model, blockPosition: Vector3, count: number)
@@ -1134,9 +1064,9 @@ function LuckyBlockController:_animateBlock(block: Model, playerPosition: Vector
 	local stretchTall = random:NextNumber(1.2, 1.4)
 	local landingSquish = random:NextNumber(0.7, 0.8)
 
-	-- Random rotation offset that persists after this hit (X axis only)
-	local rotX = math.rad(random:NextNumber(-15, 15))
-	local restPivot = orig.pivot * CFrame.Angles(rotX, 0, 0)
+	-- Random rotation offset that persists after this hit (Y axis only)
+	local rotY = math.rad(random:NextNumber(-15, 15))
+	local restPivot = self:_uprightPivot(orig.pivot) * CFrame.Angles(0, rotY, 0)
 
 	-- Update stored originals so next hit builds on this rotation
 	orig.pivot = restPivot
@@ -2051,7 +1981,6 @@ function LuckyBlockController:KnitInit()
 	self._scaleTargets = {}
 	self._healthFractionTargets = {}
 	self._progressPulseTargets = {}
-	self._timeLeftTargets = {}
 	self._rarityTargets = {}
 	self._rarityColorTargets = {}
 	self._rarityStrokeColorTargets = {}
@@ -2160,10 +2089,6 @@ function LuckyBlockController:KnitStart()
 
 	-- Update billboard visibility based on proximity + face nearest block when in range
 	RunService.Heartbeat:Connect(function(dt)
-		for _, block in self._blocks do
-			self:_updateTimeLeftForBlock(block)
-		end
-
 		local hrp = self._hrp
 		if not hrp then
 			return
