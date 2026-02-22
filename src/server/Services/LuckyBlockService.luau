@@ -1,6 +1,7 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Packages = ReplicatedStorage.Packages
@@ -31,6 +32,8 @@ local SPAWN_CLEARANCE = 0.05
 local BRAINROT_REVEAL_HEIGHT_OFFSET = 0.05
 local PLACED_BRAINROT_PREFIX = "PlacedBrainrot_"
 local PLACED_BRAINROT_Y_OFFSET = 5
+local PLACED_BRAINROT_FLOAT_AMPLITUDE = 0.45
+local PLACED_BRAINROT_FLOAT_SPEED = 1.8
 
 local random = Random.new()
 
@@ -50,6 +53,8 @@ function LuckyBlockService:KnitInit()
 	self._normalBrainrotTemplateNames = nil
 	self._carriedBrainrots = {}
 	self._placementPromptConns = {}
+	self._floatingBrainrots = {}
+	self._floatConn = nil
 end
 
 function LuckyBlockService:KnitStart()
@@ -79,6 +84,42 @@ function LuckyBlockService:KnitStart()
 	for _, player in Players:GetPlayers() do
 		self:_tryRestorePlacementsForPlayer(player)
 	end
+end
+
+function LuckyBlockService:_startPlacedBrainrotFloatLoop()
+	if self._floatConn then
+		return
+	end
+
+	self._floatConn = RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		for model, state in self._floatingBrainrots do
+			if model.Parent == nil then
+				self._floatingBrainrots[model] = nil
+			else
+				local yOffset = math.sin(now * PLACED_BRAINROT_FLOAT_SPEED + state.phase) * PLACED_BRAINROT_FLOAT_AMPLITUDE
+				model:PivotTo(state.basePivot + Vector3.new(0, yOffset, 0))
+			end
+		end
+
+		if next(self._floatingBrainrots) == nil and self._floatConn then
+			self._floatConn:Disconnect()
+			self._floatConn = nil
+		end
+	end)
+end
+
+function LuckyBlockService:_startFloatingPlacedBrainrot(placed: Model)
+	self._floatingBrainrots[placed] = {
+		basePivot = placed:GetPivot(),
+		phase = random:NextNumber(0, math.pi * 2),
+	}
+
+	placed.Destroying:Connect(function()
+		self._floatingBrainrots[placed] = nil
+	end)
+
+	self:_startPlacedBrainrotFloatLoop()
 end
 
 function LuckyBlockService:_setBlockPhysicalState(block: Model, anchored: boolean, canCollide: boolean)
@@ -204,6 +245,106 @@ function LuckyBlockService:_setPlacePromptEnabled(spot: Instance, enabled: boole
 	end
 end
 
+function LuckyBlockService:_getPlacedBrainrotRootPart(placed: Model): BasePart?
+	local brainrot = placed:FindFirstChild("Brainrot")
+	if brainrot and brainrot:IsA("Model") then
+		if brainrot.PrimaryPart then
+			return brainrot.PrimaryPart
+		end
+
+		local brainrotRoot = brainrot:FindFirstChild("HumanoidRootPart")
+		if brainrotRoot and brainrotRoot:IsA("BasePart") then
+			return brainrotRoot
+		end
+
+		local firstBrainrotPart = brainrot:FindFirstChildWhichIsA("BasePart", true)
+		if firstBrainrotPart then
+			return firstBrainrotPart
+		end
+	end
+
+	if placed.PrimaryPart then
+		return placed.PrimaryPart
+	end
+
+	return placed:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function LuckyBlockService:_setPlacedBrainrotPhysicalState(placed: Model)
+	local rootPart = self:_getPlacedBrainrotRootPart(placed)
+	if not rootPart then
+		rootPart = placed:FindFirstChildWhichIsA("BasePart", true)
+	end
+
+	for _, descendant in placed:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = descendant == rootPart
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+			descendant.Massless = descendant ~= rootPart
+		end
+	end
+end
+
+function LuckyBlockService:_getPlacedBrainrotPivot(spotPivot: CFrame): CFrame
+	local position = spotPivot.Position + Vector3.new(0, PLACED_BRAINROT_Y_OFFSET, 0)
+	local look = Vector3.new(spotPivot.LookVector.X, 0, spotPivot.LookVector.Z)
+	if look.Magnitude < 0.001 then
+		look = Vector3.new(0, 0, -1)
+	else
+		look = look.Unit
+	end
+
+	return CFrame.lookAt(position, position + look, Vector3.new(0, 1, 0))
+end
+
+function LuckyBlockService:_playPlacedBrainrotIdleAnimation(placed: Model)
+	local brainrotModel = placed:FindFirstChild("Brainrot")
+	if not brainrotModel then
+		brainrotModel = placed:FindFirstChild("Brainrot", true)
+	end
+	if not brainrotModel and placed:FindFirstChild("AnimationController") then
+		brainrotModel = placed
+	end
+	if not brainrotModel or not brainrotModel:IsA("Model") then
+		return
+	end
+
+	local animationController = brainrotModel:FindFirstChild("AnimationController")
+	if not animationController or not animationController:IsA("AnimationController") then
+		return
+	end
+
+	local animations = brainrotModel:FindFirstChild("Animations")
+	local idle = animations and animations:FindFirstChild("Idle")
+	if not idle or not idle:IsA("Animation") then
+		return
+	end
+
+	local animator = animationController:FindFirstChild("Animator")
+	if animator and not animator:IsA("Animator") then
+		animator:Destroy()
+		animator = nil
+	end
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Name = "Animator"
+		animator.Parent = animationController
+	end
+
+	local ok, track = pcall(function()
+		return animator:LoadAnimation(idle)
+	end)
+	if not ok or not track then
+		return
+	end
+
+	track.Looped = true
+	track.Priority = Enum.AnimationPriority.Idle
+	track:Play(0.1)
+end
+
 function LuckyBlockService:_spawnPlacedBrainrotAtSpot(plot: Instance, spotName: string, brainrotName: string): boolean
 	local spot = self:_getPlacementSpotByName(plot, spotName)
 	if not spot then
@@ -228,17 +369,11 @@ function LuckyBlockService:_spawnPlacedBrainrotAtSpot(plot: Instance, spotName: 
 	placed:SetAttribute("PlacementSpot", spotName)
 	placed:SetAttribute("IsPlacedBrainrot", true)
 
-	for _, descendant in placed:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			descendant.Anchored = true
-			descendant.CanCollide = false
-			descendant.CanQuery = false
-			descendant.CanTouch = false
-		end
-	end
-
-	placed:PivotTo(spotPivot + Vector3.new(0, PLACED_BRAINROT_Y_OFFSET, 0))
+	placed:PivotTo(self:_getPlacedBrainrotPivot(spotPivot))
 	placed.Parent = plot
+	self:_setPlacedBrainrotPhysicalState(placed)
+	self:_startFloatingPlacedBrainrot(placed)
+	self:_playPlacedBrainrotIdleAnimation(placed)
 
 	self:_setPlacePromptEnabled(spot, false)
 	return true
